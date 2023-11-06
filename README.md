@@ -1,4 +1,6 @@
 # JEN-1-COMPOSER-pytorch(wip)
+![model architecture](https://github.com/0417keito/JEN-1-COMPOSER-pytorch/blob/main/JEN1-Composer.jpg)
+
 the unofficial implementation of JEN-1 COMPOSER(https://arxiv.org/abs/2310.19180v2)
 this arch is very interesting.
 The JEN-1-COMPOSER uses demixed audio as input, modelling each individual track independently, but also using each as a condition.
