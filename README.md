@@ -1,12 +1,92 @@
-# JEN-1-COMPOSER-pytorch
-![model architecture](https://github.com/0417keito/JEN-1-COMPOSER-pytorch/blob/main/JEN1-Composer.jpg)
+# JEN-1-COMPOSER-pytorch(WIP)
+Unofficial implementation JEN-1: Text-Guided Universal Music Generation with Omnidirectional Diffusion Models(https://arxiv.org/abs/2308.04729)
 
-the unofficial implementation of JEN-1-COMPOSER(https://arxiv.org/abs/2310.19180v2)
-this arch is very interesting.
-The approach uses demixed audio as input, modelling each individual track independently, but also using each as a condition.
-I believe that this approach can be applied beyond music generation.
-The following may be of interest in terms of the input being demixed audio.
-https://github.com/mir-aidj/all-in-one
+![JEN-1](https://github.com/0417keito/JEN-1-COMPOSER-pytorch/blob/main/JEN1-Composer.jpg)
+![JEN-1-fig2](https://github.com/0417keito/JEN-1-COMPOSER-pytorch/blob/main/Jen1-Composer-2.png)
+
+## README
+
+## 📖 Quick Index
+* [💻 Installation](#-installation)
+* [🐍Usage](#-method)
+* [🧠TODO](#-todo)
+* [🚀Demo](#-demo)
+* [🙏Appreciation](#-appreciation)
+* [⭐️Show Your Support](#-show_your_support)
+* [🙆Welcome Contributions](#-welcom_contributions)
+
+## 💻 Installation
+```commandline
+git clone https://github.com/0417keito/JEN-1-pytorch.git
+cd JEN-1-pytorch
+pip install -r requirements.txt
+```
+
+## 🐍Usage
+### Sampling
+```python
+import torch
+from generation import Jen1
+
+ckpt_path =  'your ckpt path'
+jen1 = Jen1(ckpt_path)
+
+prompt = 'a beautiful song'
+samples = jen1.generate(prompt)
+```
+
+### Training
+```commandline
+torchrun train.py
+```
+
+### Dataset format
+Json format. the name of the Json file must be the same as the target music file.
+```json
+{"prompt": "a beautiful song"}
+```
+```python
+How should the data_dir be created?
+
+'''
+dataset_dir
+├── audios
+|    ├── music1.wav
+|    ├── music2.wav
+|    .......
+|    ├── music{n}.wav
+|
+├── metadata
+|   ├── music1.json
+|   ├── music2.json
+|   ......
+|   ├── music{n}.json
+|
+'''
+```
+
+### About config
+please see [config.py](https://github.com/0417keito/JEN-1-pytorch/blob/main/utils/config.py) and [conditioner_config.py](https://github.com/0417keito/JEN-1-pytorch/blob/main/utils/conditioner_config.py)
+
+## 🧠TODO
+- [ ] Extension to [JEN-1-Composer](https://arxiv.org/abs/2310.19180) 
+- [ ] Extension to music generation with singing voice
+- [ ] Adaptation of Consistency Model
+- [ ] In the paper, Diffusion Autoencoder was used, but I did not have much computing resources, so I used Encodec instead. So, if I can afford it, I will implement Diffusion Autoencoder.
+
+## 🚀Demo
+coming soon !
+
+## 🙏Appreciation
+[Dr Adam Fils](https://github.com/adamfils) - for support and brought this to my attention.
+
+## ⭐️Show Your Support
+
+If you find this repo interesting and useful, give us a ⭐️ on GitHub! It encourages us to keep improving the model and adding exciting features.
+Please inform us of any deficiencies by issue.
+
+## 🙆Welcome Contributions
+Contributions are always welcome.
 
 ## Citations
 ```bibtex
