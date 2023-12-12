@@ -23,6 +23,7 @@ class MusicDataset(Dataset):
         self.sample_duration = sample_duration
         self.aug_shift = aug_shift
         self.device = device
+        self.model = EncodecModel.encodec_model_48khz().to(device=self.device)
         self.audio_files_dir = f'{dataset_dir}/audios'
         self.metadatas_dir = f'{dataset_dir}/metadata'
         self.composer = composer
@@ -113,15 +114,14 @@ class MusicDataset(Dataset):
         if os.path.exists(f'{self.metadatas_dir}/{song_name}.json'):
             with open(f'{self.metadatas_dir}/{song_name}.json', 'r') as file:
                 metadata = json.load(file)
-        model = EncodecModel.encodec_model_48khz()
-        chunk = convert_audio(chunk, sr, model.sample_rate, model.channels)
-        chunk = chunk.unsqueeze(0)
+        chunk = convert_audio(chunk, sr, self.model.sample_rate, self.model.channels)
+        chunk = chunk.unsqueeze(0).to(device=self.device)
         with torch.no_grad():
-            encoded_frames = model.encode(chunk)
+            encoded_frames = self.model.encode(chunk)
         chunk = chunk.mean(0, keepdim=True)
         codes = torch.cat([encoded[0] for encoded in encoded_frames], dim=-1)
         codes = codes.transpose(0, 1)
-        emb = model.quantizer.decode(codes)
+        emb = self.model.quantizer.decode(codes)
         emb = emb.to(self.device)
         
         demix_embs = None
@@ -130,14 +130,14 @@ class MusicDataset(Dataset):
             for key, value in demix_chunks.items():
                 demix_chunk = value['demix_chunk']
                 demix_sr = value['demix_sr']
-                demix_chunk = convert_audio(demix_chunk, demix_sr, model.sample_rate, model.channels)
-                demix_chunk = demix_chunk.unsqueeze(0)
+                demix_chunk = convert_audio(demix_chunk, demix_sr, self.model.sample_rate, self.model.channels)
+                demix_chunk = demix_chunk.unsqueeze(0).to(device=self.device)
                 with torch.no_grad():
-                    demix_encoded_frames = model.encode(demix_chunk)
+                    demix_encoded_frames = self.model.encode(demix_chunk)
                 demix_chunk = demix_chunk.mean(0, keepdim=True)
                 demix_codes = torch.cat([encoded[0] for encoded in demix_encoded_frames], dim=-1)
                 demix_codes = demix_codes.transpose(0, 1)
-                demix_emb = model.quantizer.decode(demix_codes)
+                demix_emb = self.model.quantizer.decode(demix_codes)
                 demix_emb = demix_emb.to(self.device)
                 demix_embs[key] = demix_emb
         
