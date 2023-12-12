@@ -198,7 +198,9 @@ class UnifiedMultiTaskTrainer(nn.Module):
             current_stage = self.curriculum_scheduler.current_stage 
             selected_audio_emb, remaining_audio_emb, selected_keys, remaining_keys = \
                 self.select_random_tracks(audio_emb, current_stage, num_tracks)
-            prefix_token = self.create_prefix_token(selected_keys)
+            prefix_prompt = self.create_prefix_prompt(selected_keys)
+            for item in metadata:
+                item['prompt'] = prefix_prompt + ' ' + item['prompt']
         
         masked_input, mask, causal = self.random_mask(audio_emb, audio_emb.shape[2], task)
         conditioning = self.conditioner(metadata, self.config.device)
@@ -307,7 +309,7 @@ class UnifiedMultiTaskTrainer(nn.Module):
         
         return selected_audio_emb, remaining_audio_emb, selected_keys, remaining_keys
     
-    def create_prefix_token(self, selected_keys):
+    def create_prefix_prompt(self, selected_keys):
         token_mapping = {
             'bass': 'bass',
             'drums': 'drum',
