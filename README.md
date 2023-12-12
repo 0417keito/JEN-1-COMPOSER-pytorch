@@ -1,5 +1,5 @@
 # JEN-1-COMPOSER-pytorch(WIP)
-Unofficial implementation JEN-1: Text-Guided Universal Music Generation with Omnidirectional Diffusion Models(https://arxiv.org/abs/2308.04729)
+Unofficial implementation JEN-1 Composer: A Unified Framework for High-Fidelity Multi-Track Music Generation(https://arxiv.org/abs/2310.19180)
 
 ![JEN-1](https://github.com/0417keito/JEN-1-COMPOSER-pytorch/blob/main/JEN1-Composer.jpg)
 ![JEN-1-fig2](https://github.com/0417keito/JEN-1-COMPOSER-pytorch/blob/main/Jen1-Composer-2.png)
