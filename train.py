@@ -87,12 +87,9 @@ def run(rank, n_gpus, config: Config):
 
     if config.use_ddp:
         model = DDP(model, device_ids=[rank])
-    
-    if config.composer:
-        curriculum_scheduler = CurriculumScheduler(config.num_epoch, config.stage_ratios)
-    else:
-        curriculum_scheduler = None
 
+        curriculum_scheduler = CurriculumScheduler(config.num_epoch, config.stage_ratios)
+        
     logger.info('training...')
     if rank == 0:
         trainer = UnifiedMultiTaskTrainer(
@@ -111,7 +108,6 @@ def run(rank, n_gpus, config: Config):
             logger=logger,
             writers=[writer, writer_val],
             grad_clip=grad_clip,
-            composer=config.composer,
             curriculum_scheduler=curriculum_scheduler
         )
     else:
@@ -128,7 +124,6 @@ def run(rank, n_gpus, config: Config):
             logger=logger,
             writers=[writer, None],
             grad_clip=grad_clip,
-            composer=config.composer,
             curriculum_scheduler=curriculum_scheduler
         )
     trainer.curriculum_train()
