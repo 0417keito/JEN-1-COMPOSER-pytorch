@@ -28,7 +28,6 @@ class GDM_Config:
     embedding_scale = 0.8
     batch_cfg = True
     scale_cfg = True
-    composer = False
     demix_list = ['bass', 'drums', 'other', 'vocals']
 
 @dataclass
@@ -39,7 +38,6 @@ class VDM_Config:
     embedding_scale = 0.8
     batch_cfg = True
     scale_cfg = True
-    composer = False
     
 @dataclass
 class DiffusionConfig:
@@ -102,5 +100,4 @@ class Config:
     optimizer_config = OptimizerConfig
     conditioner_config = ConditionerConfig
     #for curriculum learning for jen1-composer
-    composer = False
     stage_ratios = [0.1, 0.2, 0.3, 0.2, 0.2]
