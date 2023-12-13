@@ -28,7 +28,6 @@ class GaussianDiffusion(nn.Module):
             ddim_sampling_eta=1.,
             use_fp16=False,
             alphas=None,
-            composer=False
     ):
         super().__init__()
         self.objective = objective
@@ -38,7 +37,6 @@ class GaussianDiffusion(nn.Module):
         self.batch_cfg = batch_cfg
         self.scale_cfg = scale_cfg
         self.use_fp16 = use_fp16
-        self.composer = composer
         assert objective in {'noise', 'x0',
                              'v'}, 'objective must be either pred_noise (predict noise) or pred_x0 (predict image start) or pred_v (predict v)'
         assert loss_type in {'l1', 'l2'}
@@ -245,20 +243,15 @@ class GaussianDiffusion(nn.Module):
         )
 
     def training_loosses(self, model, x_start, t, conditioning, noise=None, causal=False):
-        if self.composer:
-            assert isinstance(x_start, tuple), 'if composer x_start must be list'
-            assert isinstance(t, tuple), 'if composer times must be list'
-            x, x_for_cond = x_start
-            t, t_for_cond = t
-            x_t = self.q_sample(x, t)
-            x_t_for_cond = self.q_sample(x_for_cond, t_for_cond)
-            x_t = torch.concat([x_t, x_t_for_cond], dim=1)
-            t = torch.concat([t, t_for_cond])
-        else:
-            if noise is None:
-                noise = torch.rand_like(x_start)
-            x_t = self.q_sample(x_start, t, noise=noise)
-        
+        assert isinstance(x_start, tuple), 'if composer x_start must be list'
+        assert isinstance(t, tuple), 'if composer times must be list'
+        x, x_for_cond = x_start
+        t, t_for_cond = t
+        x_t = self.q_sample(x, t)
+        x_t_for_cond = self.q_sample(x_for_cond, t_for_cond)
+        x_t = torch.concat([x_t, x_t_for_cond], dim=1)
+        t = torch.concat([t, t_for_cond])
+
         with autocast(enabled=self.use_fp16):
             model_out = model(x_t, t, embedding=conditioning['cross_attn_cond'],
                             embedding_mask=conditioning['cross_attn_masks'],
