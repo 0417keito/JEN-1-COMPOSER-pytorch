@@ -32,7 +32,6 @@ class UnifiedMultiTaskTrainer(nn.Module):
                  cross_attn_cond_ids=['prompt'],
                  global_cond_ids= [],
                  input_concat_ids= ['masked_input', 'mask'],
-                 composer=False,
                  curriculum_scheduler: CurriculumScheduler = None
                  ):
         super().__init__()
@@ -56,22 +55,18 @@ class UnifiedMultiTaskTrainer(nn.Module):
         self.cross_attn_cond_ids = cross_attn_cond_ids
         self.global_cond_ids = global_cond_ids
         self.input_concat_ids = input_concat_ids
-        
-        self.composer = composer
+    
         self.curriculum_scheduler = curriculum_scheduler
         
     def curriculum_train(self):
-        if self.composer:
-            assert self.curriculum_scheduler is not None, "Curriculum scheduler is not provided"
-            num_curriculum_stages = self.curriculum_scheduler.curriculum_stages
-            self.curriculum_scheduler.find_stage_for_epoch(self.epoch_str)
-            
-            for stage in range(self.curriculum_scheduler.current_stage, num_curriculum_stages + 1):
-                start_epoch, end_epoch = self.curriculum_scheduler.get_current_stage_epochs(stage)
-                self.train_loop(max(self.epoch_str, start_epoch), end_epoch)
-                self.curriculum_scheduler.update_stage()
-        else:
-            self.train_loop(self.epoch_str, self.config.num_epoch)
+        assert self.curriculum_scheduler is not None, "Curriculum scheduler is not provided"
+        num_curriculum_stages = self.curriculum_scheduler.curriculum_stages
+        self.curriculum_scheduler.find_stage_for_epoch(self.epoch_str)
+        
+        for stage in range(self.curriculum_scheduler.current_stage, num_curriculum_stages + 1):
+            start_epoch, end_epoch = self.curriculum_scheduler.get_current_stage_epochs()
+            self.train_loop(max(self.epoch_str, start_epoch), end_epoch)
+            self.curriculum_scheduler.update_stage()
         
     def eval_all_tasks(self, rank=0):
         task_losses = {task: 0.0 for task in self.tasks}
@@ -139,11 +134,8 @@ class UnifiedMultiTaskTrainer(nn.Module):
                 loss_dict = {}
                 for batch_idx, (audio_emb, metadata, demix_embs_dict) in enumerate(data_iter):
                     shape = audio_emb.shape
-                    if self.composer and demix_embs_dict is not None:
-                        num_tracks = len(demix_embs_dict)
-                        audio_emb = demix_embs_dict
-                    else:
-                        num_tracks = 1
+                    num_tracks = len(demix_embs_dict)
+                    audio_emb = demix_embs_dict
                     if batch_idx >= batches_per_task:
                         break
                     weighted_loss = 0.0
@@ -194,14 +186,14 @@ class UnifiedMultiTaskTrainer(nn.Module):
     def train(self, task, audio_emb, metadata, num_tracks=1, shape=None):
         self.model.train()
         b, c, _, device = *shape, self.config.device
-        
-        if self.composer and num_tracks != 1:
-            current_stage = self.curriculum_scheduler.current_stage 
-            selected_audio_emb, remaining_audio_emb, selected_keys, remaining_keys = \
-                self.select_random_tracks(audio_emb, current_stage, num_tracks)
-            prefix_prompt = self.create_prefix_prompt(selected_keys)
-            for item in metadata:
-                item['prompt'] = prefix_prompt + ' ' + item['prompt']
+        assert num_timesteps > 1, 'num_tracks must be greater than 1'
+
+        current_stage = self.curriculum_scheduler.current_stage 
+        selected_audio_emb, remaining_audio_emb, selected_keys, remaining_keys = \
+            self.select_random_tracks(audio_emb, current_stage, num_tracks)
+        prefix_prompt = self.create_prefix_prompt(selected_keys)
+        for item in metadata:
+            item['prompt'] = prefix_prompt + ' ' + item['prompt']
         
         masked_input, mask, causal = self.random_mask(audio_emb, audio_emb.shape[2], task)
         conditioning = self.conditioner(metadata, self.config.device)
@@ -211,22 +203,13 @@ class UnifiedMultiTaskTrainer(nn.Module):
         
         if self.config.diffusion_type == 'gdm':
             num_timesteps = self.diffusion.num_timesteps
-            if self.composer:
-                t_i = torch.randint(1, num_timesteps-1, (b,), device=device).long()
-                t_for_cond = torch.zeros(b, dtype=torch.long, device=device)
-                for i in range(b):
-                    t_for_cond[i] = random.choice([0, t_i[i], num_timesteps])
-                with autocast(enabled=self.config.use_fp16):
-                    loss = self.diffusion.training(self.model, (selected_audio_emb, remaining_audio_emb), 
-                                                   (t_i, t_for_cond), conditioning, causal=causal)
-            else:
-                t = torch.randint(0, num_timesteps, (b,), device=device).long()
-                with autocast(enabled=self.config.use_fp16):
-                    loss = self.diffusion.training_loosses(self.model, audio_emb, t, conditioning, causal=causal)
-        else:
-            times = torch.rand((b,)).requires_grad_(True).to(device=device)
+            t_i = torch.randint(1, num_timesteps-1, (b,), device=device).long()
+            t_for_cond = torch.zeros(b, dtype=torch.long, device=device)
+            for i in range(b):
+                t_for_cond[i] = random.choice([0, t_i[i], num_timesteps])
             with autocast(enabled=self.config.use_fp16):
-                loss = self.diffusion.training_loosses(self.model, audio_emb, times, conditioning, causal=causal)
+                loss = self.diffusion.training(self.model, (selected_audio_emb, remaining_audio_emb), 
+                                                (t_i, t_for_cond), conditioning, causal=causal)
         return loss
             
     def random_mask(self, sequence, max_mask_length, task):
