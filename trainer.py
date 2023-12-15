@@ -55,7 +55,8 @@ class UnifiedMultiTaskTrainer(nn.Module):
         self.cross_attn_cond_ids = cross_attn_cond_ids
         self.global_cond_ids = global_cond_ids
         self.input_concat_ids = input_concat_ids
-    
+        
+        self.best_avg_total_loss = float('inf')
         self.curriculum_scheduler = curriculum_scheduler
         
     def curriculum_train(self):
@@ -68,82 +69,97 @@ class UnifiedMultiTaskTrainer(nn.Module):
             self.train_loop(max(self.epoch_str, start_epoch), end_epoch)
             self.curriculum_scheduler.update_stage()
         
-    def eval_all_tasks(self, rank=0):
-        task_losses = {task: 0.0 for task in self.tasks}
-        num_batches = {task: 0 for task in self.tasks}
-        total_loss = 0.0
-        total_batches = 0
+    def eval_all_tasks(self, epoch):
+        avg_total_loss = 0
         
+        all_task_loss_dict, task_count = self.eval()
         for task in self.tasks:
-            task_loss, task_count = self.eval(task=task, rank=rank)
-            task_losses[task] = task_loss
-            num_batches[task] = task_count
-            total_loss += task_loss
-            total_batches += task_count
-        
-        for task, loss_sum in task_losses.items():
-            avg_loss = loss_sum / num_batches[task] if num_batches[task] > 0 else 0
+            avg_loss = all_task_loss_dict[task] / task_count if task_count > 0 else 0
+            avg_total_loss += avg_loss
             self.logger.info(f'Average validation loss for task {task}: {avg_loss}')
-            if self.rank == 0:
+            if self.randk == 0:
                 scalars = {f'loss/val_{task}': avg_loss}
                 summarize(writer=self.writer, global_step=self.global_step, scalars=scalars)
         
-        avg_total_loss = total_loss / total_batches if total_batches > 0 else 0
         self.logger.info(f'Average total validation loss: {avg_total_loss}')
+        if avg_total_loss < self.best_avg_total_loss:
+            self.best_avg_total_loss = avg_total_loss
+            self.logger.info(f'New best average total validation loss: {self.best_avg_total_loss}')
+            save_checkpoint(model=self.model, optimizer=self.optimizer,
+                                        lr=self.config.optimizer_config.lr, iteration=epoch,
+                                        checkpoint_path=os.path.join(self.config.save_dir, f'Jen1_step_{self.global_step}_loss_{self.best_avg_total_loss}.pth'),
+                                        logger=self.logger)
         if self.rank == 0:
             scalars = {'loss/val_total': avg_total_loss}
             summarize(writer=self.writer, global_step=self.global_step, scalars=scalars)
         
         self.model.train()
     
-    def eval(self, task, rank=0):
+    def eval(self):
         self.model.eval()
         count = 0
-        loss_sum = 0
+        loss_dict = {task: 0 for task in self.tasks}
         with torch.no_grad():
             for batch_idx, (audio_emb, metadata, demix_embs_dict) in enumerate(self.valid_dl):
                 b, _, _, device = *audio_emb.shape, self.config.device
-                masked_input, mask, causal = self.random_mask(audio_emb, audio_emb.shape[2], task)
-                conditioning = self.conditioner(metadata, self.config.device)
-                conditioning['masked_input'] = masked_input
-                conditioning['mask'] = mask
-                conditioning = self.get_conditioning(conditioning)
-                if self.config.diffusion_type == 'gdm':
-                    num_timesteps = self.diffusion.num_timesteps
-                    t = torch.randint(0, num_timesteps, (b,), device=device).long()
-                    with autocast(enabled=self.config.use_fp16):
-                        loss = self.diffusion.training_loosses(self.model, audio_emb, t, conditioning, causal=causal)
-                else:
-                    with autocast(enabled=self.config.use_fp16):
-                        loss = self.diffusion.training_loosses(self.model, audio_emb, conditioning, causal=causal)
-                    
-                loss_sum += loss
-                count += 1
+                assert b % len(self.tasks) == 0, "Batch size must be divisible by the number of tasks"
+                sub_batch_size = b // len(self.tasks)
                 
-        return loss_sum, count
+                for i, task in enumerate(self.tasks):
+                    start_idx = i * sub_batch_size
+                    end_idx = start_idx + sub_batch_size
+                    sub_audio_emb = audio_emb[start_idx:end_idx]
+                    sub_metadata = metadata[start_idx:end_idx]
+                    sub_demix_embs_dict = demix_embs_dict[start_idx:end_idx]
+                    b, c, _, device = *sub_audio_emb.shape, self.config.device
+                    num_tracks = len(sub_demix_embs_dict)
+                    
+                    current_stage = self.curriculum_scheduler.current_stage
+                    selected_audio_emb, remaining_audio_emb, selected_keys, remaining_keys = \
+                        self.select_random_tracks(sub_demix_embs_dict, current_stage, num_tracks)
+                    prefix_prompt = self.create_prefix_prompt(selected_keys)
+                    for item in sub_metadata:
+                        item['prompt'] = prefix_prompt + '' + item['prompt']
+                    masked_input, mask, causal = self.random_mask(audio_emb, audio_emb.shape[2], task)
+                    conditioning = self.conditioner(metadata, self.config.device)
+                    conditioning['masked_input'] = masked_input
+                    conditioning['mask'] = mask
+                    conditioning = self.get_conditioning(conditioning)
+                    
+                    if self.config.diffusion_type == 'gdm':
+                        num_timesteps = self.diffusion.num_timesteps
+                        t_i = torch.randint(1, num_timesteps-1, (b,), device=device).long()
+                        t_for_cond = torch.zeros(b, dtype=torch.long, device=device)
+                        for i in range(b):
+                            t_for_cond[i] = random.choice([0, t_i[i], num_timesteps])
+                        with autocast(enabled=self.config.use_fp16):
+                            loss = self.diffusion.training_loosses(self.model, (selected_audio_emb, remaining_audio_emb),
+                                                                   (t_i, t_for_cond), conditioning, causal=causal)
+                    loss_dict[task] += loss.item()
+                count += 1
+                                
+        return loss_dict, count
         
     def train_loop(self, str_epoch, end_epoch):
         for epoch in range(str_epoch, int(end_epoch + 1)):
-            total_batches = len(self.train_dl)
-            batches_per_task = total_batches // len(self.tasks)
-            assert batches_per_task >= 1, 'batches_per_task must be greater than or equal to 1'
-            data_iter = iter(self.train_dl)
-            
-            for i in range(batches_per_task):
-                weighted_loss = 0.0
+            for batch_idx, (audio_emb, metadata, demix_embs_dict) in enumerate(self.train_dl):
+                batch_size = audio_emb.size(0)
+                assert batch_size % len(self.tasks) == 0, 'Batch size must be divisible by the number of tasks'
+                sub_batch_size = batch_size // len(self.tasks)
+                
                 loss_dict = {}
-                for batch_idx, (audio_emb, metadata, demix_embs_dict) in enumerate(data_iter):
-                    shape = audio_emb.shape
-                    num_tracks = len(demix_embs_dict)
-                    audio_emb = demix_embs_dict
-                    if batch_idx >= batches_per_task:
-                        break
-                    weighted_loss = 0.0
-                    loss_dict = {}
-                    for task in self.tasks:
-                        loss = self.train(task=task, audio_emb=audio_emb, metadata=metadata, num_tracks=num_tracks, shape=shape)
-                        weighted_loss += loss
-                        loss_dict[task] = loss.item()
+                weighted_loss = torch.tensor(0.0, device=self.config.device)
+                for i, task in enumerate(self.tasks):
+                    start_idx = i * sub_batch_size
+                    end_idx = start_idx + sub_batch_size
+                    sub_audio_emb = audio_emb[start_idx:end_idx]
+                    sub_metadata = metadata[start_idx:end_idx]
+                    sub_demix_embs_dict = demix_embs_dict[start_idx:end_idx]
+                    shape = sub_audio_emb.shape
+                    num_tracks = len(sub_demix_embs_dict)
+                    loss = self.train(task=task, audio_emb=sub_audio_emb, metadata=sub_metadata, demix_embs_dict=sub_demix_embs_dict, num_tracks=num_tracks, shape=shape)
+                    loss_dict[task] = loss.item()
+                    weighted_loss += loss
                 
                 self.optimizer.zero_grad()
                 self.scaler.scale(weighted_loss).backward()
@@ -175,22 +191,17 @@ class UnifiedMultiTaskTrainer(nn.Module):
                         summarize(writer=self.writer, global_step=self.global_step, scalars=scalars)
                         
                     if self.global_step % self.config.eval_interval == 0:
-                        self.eval_all_tasks(rank=self.rank)
-                        save_checkpoint(model=self.model, optimizer=self.optimizer,
-                                        lr=self.config.optimizer_config.lr, iteration=epoch,
-                                        checkpoint_path=os.path.join(self.config.save_dir, f'Jen1_step_{self.global_step}.pth'),
-                                        logger=self.logger)
-                     
+                        self.eval_all_tasks(rank=self.rank, epoch=epoch)
                 self.global_step += 1   
     
-    def train(self, task, audio_emb, metadata, num_tracks=1, shape=None):
+    def train(self, task, audio_emb, metadata, demix_embs_dict, num_tracks=1):
         self.model.train()
-        b, c, _, device = *shape, self.config.device
-        assert num_timesteps > 1, 'num_tracks must be greater than 1'
+        b, c, _, device = *audio_emb.shape, self.config.device
+        assert num_tracks > 1, 'num_tracks must be greater than 1'
 
         current_stage = self.curriculum_scheduler.current_stage 
         selected_audio_emb, remaining_audio_emb, selected_keys, remaining_keys = \
-            self.select_random_tracks(audio_emb, current_stage, num_tracks)
+            self.select_random_tracks(demix_embs_dict, current_stage, num_tracks)
         prefix_prompt = self.create_prefix_prompt(selected_keys)
         for item in metadata:
             item['prompt'] = prefix_prompt + ' ' + item['prompt']
@@ -208,7 +219,7 @@ class UnifiedMultiTaskTrainer(nn.Module):
             for i in range(b):
                 t_for_cond[i] = random.choice([0, t_i[i], num_timesteps])
             with autocast(enabled=self.config.use_fp16):
-                loss = self.diffusion.training(self.model, (selected_audio_emb, remaining_audio_emb), 
+                loss = self.diffusion.training_loosses(self.model, (selected_audio_emb, remaining_audio_emb), 
                                                 (t_i, t_for_cond), conditioning, causal=causal)
         return loss
             
