@@ -29,6 +29,7 @@ class UnifiedMultiTaskTrainer(nn.Module):
                  logger,
                  writers,
                  grad_clip,
+                 grad_accum_every,
                  cross_attn_cond_ids=['prompt'],
                  global_cond_ids= [],
                  input_concat_ids= ['masked_input', 'mask'],
@@ -41,6 +42,7 @@ class UnifiedMultiTaskTrainer(nn.Module):
         self.epoch_str = epoch_str
         self.global_step = global_step
         self.grad_clip = grad_clip
+        self.grad_accum_every = grad_accum_every
         self.model = model
         self.diffusion = diffusion
         self.conditioner = conditioner
@@ -141,88 +143,109 @@ class UnifiedMultiTaskTrainer(nn.Module):
         return loss_dict, count
         
     def train_loop(self, str_epoch, end_epoch):
+        grad_accum = 0
+        all_loss = 0
+        loss_dict = {task: 0 for task in self.tasks}
+        
         for epoch in range(str_epoch, int(end_epoch + 1)):
             for batch_idx, (audio_emb, metadata, demix_embs_dict) in enumerate(self.train_dl):
-                batch_size = audio_emb.size(0)
-                assert batch_size % len(self.tasks) == 0, 'Batch size must be divisible by the number of tasks'
-                sub_batch_size = batch_size // len(self.tasks)
+                all_task_loss, all_loss_dict = self.train(audio_emb=audio_emb, metadata=metadata, demix_embs_dict=demix_embs_dict)
+                all_loss += all_task_loss.item() / self.grad_accum_every
+                for task in self.tasks:
+                    loss_dict[task] += (all_loss_dict[task] / self.grad_accum_every)
                 
-                loss_dict = {}
-                weighted_loss = torch.tensor(0.0, device=self.config.device)
-                for i, task in enumerate(self.tasks):
-                    start_idx = i * sub_batch_size
-                    end_idx = start_idx + sub_batch_size
-                    sub_audio_emb = audio_emb[start_idx:end_idx]
-                    sub_metadata = metadata[start_idx:end_idx]
-                    sub_demix_embs_dict = demix_embs_dict[start_idx:end_idx]
-                    shape = sub_audio_emb.shape
-                    num_tracks = len(sub_demix_embs_dict)
-                    loss = self.train(task=task, audio_emb=sub_audio_emb, metadata=sub_metadata, demix_embs_dict=sub_demix_embs_dict, num_tracks=num_tracks, shape=shape)
-                    loss_dict[task] = loss.item()
-                    weighted_loss += loss
+                if grad_accum == 0:
+                    self.optimizer.zero_grad()
+                self.scaler.scale(all_task_loss / self.grad_accum_every).backward()
+                grad_accum += 1
+           
+                if grad_accum == 0:
+                    self.optimizer.zero_grad()
+                self.scaler.scale(all_task_loss / self.grad_accum_every).backward()
+                grad_accum += 1
                 
-                self.optimizer.zero_grad()
-                self.scaler.scale(weighted_loss).backward()
-                nn.utils.clip_grad_norm_(self.model.parameters(), max_norm=self.grad_clip)
-                self.scaler.unscale_(self.optimizer)
-                self.scaler.step(self.optimizer)
-                self.lr_scheduler.step()
-                self.scaler.update()
+                if grad_accum == self.grad_accum_every:
+                    self.scaler.unscale_(self.optimizer)
+                    nn.utils.clip_grad_norm_(self.model.parameters(), max_norm=self.grad_clip)
+                    self.scaler.step(self.optimizer)
+                    self.lr_scheduler.step()
+                    self.scaler.update()
+                    grad_accum = 0
                 
-                if self.rank == 0:
-                    loss_text_guided = loss_dict['text_guided']
-                    loss_inpaint = loss_dict['music_inpaint']
-                    loss_cont = loss_dict['music_cont']
-                    if self.global_step % self.config.log_interval == 0:
-                        lr = self.optimizer.param_groups[0]['lr']
-                        self.logger.info('Train Epoch: {}, [{:.0f}%]'.format(
-                            epoch, 100. * batch_idx / len(self.train_dl)
-                            ))
-                        self.logger.info(
-                            f'loss: {weighted_loss} '
-                            f'loss_text_guided: {loss_text_guided} '
-                            f'loss_inpaint: {loss_inpaint} '
-                            f'loss_cont: {loss_cont} '
-                            f'global_step: {self.global_step}, lr:{lr}')
-                        scalars = {'loss/train': weighted_loss,
-                                   'loss_text_guided/train': loss_text_guided,
-                                   'loss_inpaint/train': loss_inpaint,
-                                   'loss_cont/train': loss_cont}
-                        summarize(writer=self.writer, global_step=self.global_step, scalars=scalars)
-                        
-                    if self.global_step % self.config.eval_interval == 0:
-                        self.eval_all_tasks(rank=self.rank, epoch=epoch)
+                    if self.rank == 0:
+                        loss_text_guided = loss_dict['text_guided']
+                        loss_inpaint = loss_dict['music_inpaint']
+                        loss_cont = loss_dict['music_cont']
+                        if self.global_step % self.config.log_interval == 0:
+                            lr = self.optimizer.param_groups[0]['lr']
+                            self.logger.info('Train Epoch: {}, [{:.0f}%]'.format(
+                                epoch, 100. * batch_idx / len(self.train_dl)
+                                ))
+                            self.logger.info(
+                                f'loss: {all_loss} '
+                                f'loss_text_guided: {loss_text_guided} '
+                                f'loss_inpaint: {loss_inpaint} '
+                                f'loss_cont: {loss_cont} '
+                                f'global_step: {self.global_step}, lr:{lr}')
+                            scalars = {'loss/train': all_loss,
+                                    'loss_text_guided/train': loss_text_guided,
+                                    'loss_inpaint/train': loss_inpaint,
+                                    'loss_cont/train': loss_cont}
+                            summarize(writer=self.writer, global_step=self.global_step, scalars=scalars)
+                            
+                    loss_dict = {task: 0 for task in self.tasks}
+                    all_loss = 0
+                    
+                if self.global_step % self.config.eval_interval == 0:
+                    self.eval_all_tasks(rank=self.rank, epoch=epoch)
+                
                 self.global_step += 1   
     
-    def train(self, task, audio_emb, metadata, demix_embs_dict, num_tracks=1):
-        self.model.train()
-        b, c, _, device = *audio_emb.shape, self.config.device
-        assert num_tracks > 1, 'num_tracks must be greater than 1'
-
-        current_stage = self.curriculum_scheduler.current_stage 
-        selected_audio_emb, remaining_audio_emb, selected_keys, remaining_keys = \
-            self.select_random_tracks(demix_embs_dict, current_stage, num_tracks)
-        prefix_prompt = self.create_prefix_prompt(selected_keys)
-        for item in metadata:
-            item['prompt'] = prefix_prompt + ' ' + item['prompt']
-        
-        masked_input, mask, causal = self.random_mask(audio_emb, audio_emb.shape[2], task)
-        conditioning = self.conditioner(metadata, self.config.device)
-        conditioning['masked_input'] = masked_input
-        conditioning['mask'] = mask
-        conditioning = self.get_conditioning(conditioning)
-        
-        if self.config.diffusion_type == 'gdm':
-            num_timesteps = self.diffusion.num_timesteps
-            t_i = torch.randint(1, num_timesteps-1, (b,), device=device).long()
-            t_for_cond = torch.zeros(b, dtype=torch.long, device=device)
-            for i in range(b):
-                t_for_cond[i] = random.choice([0, t_i[i], num_timesteps])
-            with autocast(enabled=self.config.use_fp16):
-                loss = self.diffusion.training_loosses(self.model, (selected_audio_emb, remaining_audio_emb), 
-                                                (t_i, t_for_cond), conditioning, causal=causal)
-        return loss
+    def train(self, task, audio_emb, metadata, demix_embs_dict):
+        loss_dict = {task: 0 for task in self.tasks}
+        all_loss = torch.tensor(0.0, device=self.config.device)
+        batch_size = audio_emb.size(0)
+        assert batch_size % len(self.tasks) == 0, "Batch size must be divisible by the number of tasks"
+        sub_batch_size = batch_size // len(self.tasks)
+        for i, task in enumerate(self.tasks):
+            start_idx = i * sub_batch_size
+            end_idx = start_idx + sub_batch_size
+            sub_audio_emb = audio_emb[start_idx:end_idx]
+            sub_metadata = metadata[start_idx:end_idx]
+            sub_demix_embs_dict = demix_embs_dict[start_idx:end_idx]
+            num_tracks = len(sub_demix_embs_dict)
+            assert num_tracks > 1, 'num_tracks must be greater than 1'
+            self.model.train()
+            b, _, _, device = *sub_audio_emb.shape, self.config.device
             
+            current_stage = self.curriculum_scheduler.current_stage 
+            selected_audio_emb, remaining_audio_emb, selected_keys, remaining_keys = \
+                self.select_random_tracks(sub_demix_embs_dict, current_stage, num_tracks)
+            prefix_prompt = self.create_prefix_prompt(selected_keys)
+            for item in metadata:
+                item['prompt'] = prefix_prompt + ' ' + item['prompt']
+        
+            masked_input, mask, causal = self.random_mask(sub_audio_emb, sub_audio_emb.shape[2], task)
+            conditioning = self.conditioner(sub_metadata, self.config.device)
+            conditioning['masked_input'] = masked_input
+            conditioning['mask'] = mask
+            conditioning = self.get_conditioning(conditioning)
+        
+            if self.config.diffusion_type == 'gdm':
+                num_timesteps = self.diffusion.num_timesteps
+                t_i = torch.randint(1, num_timesteps-1, (b,), device=device).long()
+                t_for_cond = torch.zeros(b, dtype=torch.long, device=device)
+                for i in range(b):
+                    t_for_cond[i] = random.choice([0, t_i[i], num_timesteps])
+                with autocast(enabled=self.config.use_fp16):
+                    loss = self.diffusion.training_loosses(self.model, (selected_audio_emb, remaining_audio_emb), 
+                                                    (t_i, t_for_cond), conditioning, causal=causal)
+                    
+            loss_dict[task] += loss.item()
+            all_loss += loss
+        
+        return all_loss, loss_dict
+    
     def random_mask(self, sequence, max_mask_length, task):
         b, _, sequence_length = sequence_length.size()
         
