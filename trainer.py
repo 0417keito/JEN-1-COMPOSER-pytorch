@@ -158,11 +158,6 @@ class UnifiedMultiTaskTrainer(nn.Module):
                     self.optimizer.zero_grad()
                 self.scaler.scale(all_task_loss / self.grad_accum_every).backward()
                 grad_accum += 1
-           
-                if grad_accum == 0:
-                    self.optimizer.zero_grad()
-                self.scaler.scale(all_task_loss / self.grad_accum_every).backward()
-                grad_accum += 1
                 
                 if grad_accum == self.grad_accum_every:
                     self.scaler.unscale_(self.optimizer)
