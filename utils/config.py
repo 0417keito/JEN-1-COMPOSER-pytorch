@@ -10,11 +10,12 @@ class DataConfig:
     # min_duration, max_duration, and sample_duration are all listed in seconds.
     min_duration = 0
     max_duration = 300
-    sample_duration = 32 # This length determines the length of the latent variable. Adjust the length of the latent variable so that it is 2**(num_layers).
+    sample_duration = 10 # This length determines the length of the latent variable. Adjust the length of the latent variable so that it is 2**(num_layers).
     aug_shift = True
-    batch_size = 1 
+    batch_size = 3 
     shuffle = True
     train_test_split = 0.5
+    composer = True
     device = 'cuda' if torch.cuda.is_available else 'cpu'
 
 @dataclass
@@ -91,9 +92,10 @@ class Config:
     num_epoch = 100
     log_interval = 10
     eval_interval = 20
+    grad_accum_every = 20
     is_fintuning = False
     device = 'cuda' if torch.cuda.is_available() else 'cpu'
-    diffusion_type = 'vdm'
+    diffusion_type = 'gdm'
     dataset_config = DataConfig
     diffusion_config = DiffusionConfig
     model_config = ModelConfig
