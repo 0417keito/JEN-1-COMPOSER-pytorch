@@ -22,15 +22,6 @@ class CurriculumScheduler:
         end_epoch = start_epoch + self.stage_epochs[self.current_stage -1]
         return start_epoch, end_epoch
     
-    def find_stage_for_epoch(self, epoch):
-        cumulative_epochs = 0
-        for stage, stage_epoch in enumerate(self.stage_epochs, 1):
-            cumulative_epochs += stage_epoch
-            if epoch <= cumulative_epochs:
-                self.current_stage = stage
-                return stage
-        return self.curriculum_stages
-    
 if __name__ == '__main__':
     total_epochs = 100
     stage_ratios = [0.1, 0.2, 0.3, 0.2, 0.2]
