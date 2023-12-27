@@ -108,6 +108,7 @@ def run(rank, n_gpus, config: Config):
             logger=logger,
             writers=[writer, writer_val],
             grad_clip=grad_clip,
+            grad_accum_every=config.grad_accum_every,
             curriculum_scheduler=curriculum_scheduler
         )
     else:
@@ -124,6 +125,7 @@ def run(rank, n_gpus, config: Config):
             logger=logger,
             writers=[writer, None],
             grad_clip=grad_clip,
+            grad_accum_every=config.grad_accum_every,
             curriculum_scheduler=curriculum_scheduler
         )
     trainer.curriculum_train()
