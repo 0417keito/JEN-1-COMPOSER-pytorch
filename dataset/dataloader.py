@@ -166,11 +166,12 @@ def get_dataloader(dataset_folder, batch_size: int = 50, shuffle: bool = True):
 
 
 def get_dataloaders(dataset_dir, sr, channels, min_duration, max_duration, sample_duration, 
-                    aug_shift, batch_size: int = 50, shuffle: bool = True, split_ratio=0.8, device='cpu'):
+                    aug_shift, batch_size: int = 50, shuffle: bool = True, split_ratio=0.8, device='cpu',
+                    composer=False):
     if not isinstance(dataset_dir, tuple):
         dataset = MusicDataset(dataset_dir=dataset_dir, sr=sr, channels=channels,
                                min_duration=min_duration, max_duration=max_duration, sample_duration=sample_duration,
-                               aug_shift=aug_shift, device=device)
+                               aug_shift=aug_shift, device=device, composer=composer)
         # Split the dataset into train and validation
         train_size = int(split_ratio * len(dataset))
         val_size = len(dataset) - train_size
@@ -179,10 +180,10 @@ def get_dataloaders(dataset_dir, sr, channels, min_duration, max_duration, sampl
         train_dir, valid_dir = dataset_dir
         train_dataset = MusicDataset(dataset_dir=train_dir, sr=sr, channels=channels,
                                      min_duration=min_duration, max_duration=max_duration, sample_duration=sample_duration,
-                                     aug_shift=aug_shift, device=device)
+                                     aug_shift=aug_shift, device=device, composer=composer)
         val_dataset = MusicDataset(dataset_dir=valid_dir, sr=sr, channels=channels,
                                      min_duration=min_duration, max_duration=max_duration, sample_duration=sample_duration,
-                                     aug_shift=aug_shift, device=device)    
+                                     aug_shift=aug_shift, device=device, composer=composer)    
     train_dataloader = DataLoader(train_dataset, batch_size=batch_size, shuffle=shuffle, collate_fn=collate, drop_last=True)
     val_dataloader = DataLoader(val_dataset, batch_size=batch_size, shuffle=False, collate_fn=collate, drop_last=True)
 
