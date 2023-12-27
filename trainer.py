@@ -64,11 +64,10 @@ class UnifiedMultiTaskTrainer(nn.Module):
     def curriculum_train(self):
         assert self.curriculum_scheduler is not None, "Curriculum scheduler is not provided"
         num_curriculum_stages = self.curriculum_scheduler.curriculum_stages
-        self.curriculum_scheduler.find_stage_for_epoch(self.epoch_str)
         
         for stage in range(self.curriculum_scheduler.current_stage, num_curriculum_stages + 1):
             start_epoch, end_epoch = self.curriculum_scheduler.get_current_stage_epochs()
-            self.train_loop(max(self.epoch_str, start_epoch), end_epoch)
+            self.train_loop(self.epoch_str + start_epoch, self.epoch_str + end_epoch)
             self.curriculum_scheduler.update_stage()
         
     def eval_all_tasks(self, epoch):
@@ -196,7 +195,7 @@ class UnifiedMultiTaskTrainer(nn.Module):
                 
                 self.global_step += 1   
     
-    def train(self, task, audio_emb, metadata, demix_embs_dict):
+    def train(self, audio_emb, metadata, demix_embs_dict):
         loss_dict = {task: 0 for task in self.tasks}
         all_loss = torch.tensor(0.0, device=self.config.device)
         batch_size = audio_emb.size(0)
