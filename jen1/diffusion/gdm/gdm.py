@@ -243,8 +243,8 @@ class GaussianDiffusion(nn.Module):
         )
 
     def training_loosses(self, model, x_start, t, conditioning, noise=None, causal=False):
-        assert isinstance(x_start, tuple), 'if composer x_start must be list'
-        assert isinstance(t, tuple), 'if composer times must be list'
+        assert isinstance(x_start, tuple), 'if composer x_start must be tuple'
+        assert isinstance(t, tuple), 'if composer times must be tuple'
         x, x_for_cond = x_start
         t, t_for_cond = t
         x_t = self.q_sample(x, t)
