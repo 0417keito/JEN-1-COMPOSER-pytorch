@@ -246,11 +246,15 @@ class GaussianDiffusion(nn.Module):
         assert isinstance(x_start, tuple), 'if composer x_start must be tuple'
         assert isinstance(t, tuple), 'if composer times must be tuple'
         x, x_for_cond = x_start
+        selected_channels, remaining_channels = x.size(1), x_for_cond.size(1)
         t, t_for_cond = t
         x_t = self.q_sample(x, t)
         x_t_for_cond = self.q_sample(x_for_cond, t_for_cond)
         x_t = torch.concat([x_t, x_t_for_cond], dim=1)
         t = torch.concat([t, t_for_cond])
+        
+        if noise is not None:
+            noise = torch.rand_like(x)
 
         with autocast(enabled=self.use_fp16):
             model_out = model(x_t, t, embedding=conditioning['cross_attn_cond'],
@@ -261,17 +265,15 @@ class GaussianDiffusion(nn.Module):
                             channels_list=[conditioning['input_concat_cond']],
                             batch_cfg=self.batch_cfg, scale_cfg=self.scale_cfg,
                             causal=causal)
+            selected_out, remainig_out = torch.split(model_out, [selected_channels, remaining_channels], dim=1)
 
         if self.objective == 'noise':
             target = noise
         elif self.objective == 'x0':
-            target = x_start
-        elif self.objective == 'v':
-            target = (extract(self.sqrt_alphas_cumprod, t, x_start.shape) * noise -
-                      extract(self.sqrt_one_minus_alphas_cumprod, t, x_start.shape) * x_start)
+            target = x
         else:
             raise ValueError(f'unknown objective {self.objective}')
 
-        loss = self.loss_fn(model_out, target, reduction='none')
+        loss = self.loss_fn(selected_out, target, reduction='none')
         loss = reduce(loss, 'b ... -> b', 'mean')
         return loss.mean()
