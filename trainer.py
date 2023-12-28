@@ -217,6 +217,7 @@ class UnifiedMultiTaskTrainer(nn.Module):
                 self.select_random_tracks(sub_demix_embs_dict, current_stage, num_tracks)
             prefix_prompt = self.create_prefix_prompt(selected_keys)
             for item in metadata:
+                #I don't know if I should be adding prefix prompts or prefix tuning. If you know, please fix it.
                 item['prompt'] = prefix_prompt + ' ' + item['prompt']
         
             masked_input, mask, causal = self.random_mask(sub_audio_emb, sub_audio_emb.shape[2], task)
