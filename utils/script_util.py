@@ -201,6 +201,7 @@ def create_gaussian_diffusion(steps=1000,
                               scale_cfg=False,
                               sampling_steps=None,
                               use_fp16=False,
+                              demix_list = ['bass', 'drums', 'other', 'vocals']
                               ):
     from jen1.diffusion.gdm.gdm import GaussianDiffusion
     
@@ -223,6 +224,7 @@ def create_gaussian_diffusion(steps=1000,
         scale_cfg=scale_cfg,
         sampling_timesteps=sampling_steps,
         use_fp16=use_fp16,
+        demix_list = demix_list
     ).to(device)
     
 def create_variational_diffusion(loss_type='l2',
