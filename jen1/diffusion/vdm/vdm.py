@@ -88,7 +88,7 @@ class VDM(nn.Module):
         
         return x_noised, alphas, sigmas
         
-    def training_loosses(self, model, x_start, times, conditioning, noise=None, causal=False):            
+    def training_losses(self, model, x_start, times, conditioning, noise=None, causal=False):            
         if noise is None:
             noise = torch.rand_like(x_start)
         

@@ -134,7 +134,7 @@ class UnifiedMultiTaskTrainer(nn.Module):
                         for i in range(b):
                             t_for_cond[i] = random.choice([0, t_i[i], num_timesteps])
                         with autocast(enabled=self.config.use_fp16):
-                            loss = self.diffusion.training_loosses(self.model, (selected_audio_emb, remaining_audio_emb),
+                            loss = self.diffusion.training_losses(self.model, (selected_audio_emb, remaining_audio_emb),
                                                                    (t_i, t_for_cond), conditioning, causal=causal)
                     loss_dict[task] += loss.item()
                 count += 1
@@ -233,7 +233,7 @@ class UnifiedMultiTaskTrainer(nn.Module):
                 for i in range(b):
                     t_for_cond[i] = random.choice([0, t_i[i], num_timesteps])
                 with autocast(enabled=self.config.use_fp16):
-                    loss = self.diffusion.training_loosses(self.model, (selected_audio_emb, remaining_audio_emb), 
+                    loss = self.diffusion.training_losses(self.model, (selected_audio_emb, remaining_audio_emb), 
                                                     (t_i, t_for_cond), conditioning, causal=causal)
                     
             loss_dict[task] += loss.item()
