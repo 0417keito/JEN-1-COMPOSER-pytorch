@@ -2,6 +2,8 @@ import torch
 from dataclasses import dataclass
 from .conditioner_config import ConditionerConfig
 
+num_tracks = 3
+
 @dataclass
 class DataConfig:
     dataset_dir = ''
@@ -47,8 +49,8 @@ class DiffusionConfig:
     
 @dataclass
 class ModelConfig: 
-    in_channels = 128 #number of potential embedded channels to be entered
-    channels = 128
+    in_channels = 384 #number of potential embedded channels to be entered
+    channels = 384
     multipliers = [1, 1, 1, 2, 2, 4, 4, 4, 8, 8] # indicates how many times the input channels of each block of UNet are in_channels. 
     factors = [1, 2, 1, 2, 1, 2, 1, 2, 1] # convolution layer parameters for each block
     num_blocks = [1, 3, 3, 3, 3, 3, 3, 3, 1] # number of ResNet Blocks in each block
@@ -63,7 +65,7 @@ class ModelConfig:
     use_stft = False
     use_stft_context = False
     use_xattn_time = True
-    out_channels = 128
+    out_channels = 384
     context_features = None # if you want to use cond['global_cond']
     context_features_multiplier = 4 # if you want to use cond['global_cond'] or use_context_time == True
     context_channels = [129]
