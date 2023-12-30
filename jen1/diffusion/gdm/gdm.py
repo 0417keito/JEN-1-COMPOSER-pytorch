@@ -245,6 +245,7 @@ class GaussianDiffusion(nn.Module):
     def training_loosses(self, model, x_start, t, conditioning, noise=None, causal=False):
         assert isinstance(x_start, tuple), 'if composer x_start must be tuple'
         assert isinstance(t, tuple), 'if composer times must be tuple'
+        
         x, x_for_cond = x_start
         selected_channels, remaining_channels = x.size(1), x_for_cond.size(1)
         t, t_for_cond = t
@@ -253,7 +254,7 @@ class GaussianDiffusion(nn.Module):
         x_t = torch.concat([x_t, x_t_for_cond], dim=1)
         t = torch.concat([t, t_for_cond])
         
-        if noise is not None:
+        if noise is None:
             noise = torch.rand_like(x)
 
         with autocast(enabled=self.use_fp16):
@@ -273,6 +274,7 @@ class GaussianDiffusion(nn.Module):
             target = x
         else:
             raise ValueError(f'unknown objective {self.objective}')
+        #TODO support V-objective
 
         loss = self.loss_fn(selected_out, target, reduction='none')
         loss = reduce(loss, 'b ... -> b', 'mean')
