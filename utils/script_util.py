@@ -177,8 +177,7 @@ def create_diffusion(config: Config, sampling_steps=None):
                                          batch_cfg=diffusion_config.batch_cfg,
                                          scale_cfg=diffusion_config.scale_cfg,
                                          sampling_steps=sampling_steps,
-                                         use_fp16=use_fp16,
-                                         demix_list=diffusion_config.demix_list)
+                                         use_fp16=use_fp16,)
     elif diffusion_type.lower() == 'vdm':
         use_fp16 = config.use_fp16
         diffusion_config = config.diffusion_config.variational_diffusion
