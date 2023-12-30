@@ -228,6 +228,8 @@ class UnifiedMultiTaskTrainer(nn.Module):
         loss_dict = {task: 0 for task in self.tasks}
         all_loss = torch.tensor(0.0, device=self.config.device)
         batch_size = audio_emb.size(0)
+        num_tracks = len(demix_embs_dict)
+        print('num_tracks:', num_tracks)
         assert batch_size % len(self.tasks) == 0, "Batch size must be divisible by the number of tasks"
         # This part evenly distributes samples in the batch among the tasks ('text_guided', 'music_inpaint', 'music_cont').
         # Therefore, the batch must be divisible by the number of tasks.
@@ -237,8 +239,13 @@ class UnifiedMultiTaskTrainer(nn.Module):
             end_idx = start_idx + sub_batch_size
             sub_audio_emb = audio_emb[start_idx:end_idx]
             sub_metadata = metadata[start_idx:end_idx]
-            sub_demix_embs_dict = demix_embs_dict[start_idx:end_idx]
-            num_tracks = len(sub_demix_embs_dict)
+            sub_bass_embs = demix_embs_dict['bass'][start_idx:end_idx]
+            sub_drums_embs = demix_embs_dict['drums'][start_idx:end_idx]
+            sub_other_embs = demix_embs_dict['other'][start_idx:end_idx]
+            print('sub_drums_embs.shape:', sub_other_embs.shape)
+            sub_demix_embs_dict = {'bass': sub_bass_embs,
+                                   'drums': sub_drums_embs,
+                                   'other': sub_other_embs}
             assert num_tracks > 1, 'num_tracks must be greater than 1'
             self.model.train()
             b, _, _, device = *sub_audio_emb.shape, self.config.device
@@ -274,6 +281,10 @@ class UnifiedMultiTaskTrainer(nn.Module):
                 # For more details, see section 5.1 SETUP-Implementation Details and Figure 2 in the JEN-1-Composer paper (https://arxiv.org/abs/2310.19180).
                 t_i = torch.randint(1, num_timesteps-1, (b,), device=device).long()
                 t_for_cond = torch.zeros(b, dtype=torch.long, device=device)
+                print('t_i.shape:', t_i.shape)
+                print('t_i:', t_i)
+                print('t_for_cond.shape:', t_for_cond.shape)
+                print('t_for_cond:', len(t_for_cond))
                 for i in range(b):
                     t_for_cond[i] = random.choice([0, t_i[i], num_timesteps])
                 with autocast(enabled=self.config.use_fp16):
@@ -286,7 +297,7 @@ class UnifiedMultiTaskTrainer(nn.Module):
         return all_loss, loss_dict
     
     def random_mask(self, sequence, max_mask_length, task):
-        b, _, sequence_length = sequence_length.size()
+        b, _, sequence_length = sequence.size()
         
         masks = []
         if task.lower() == 'text_guided':
@@ -349,7 +360,7 @@ class UnifiedMultiTaskTrainer(nn.Module):
             "input_concat_cond": input_concat_cond
         }
         
-    def select_random_tracks(audio_emb, current_stage, num_tracks):
+    def select_random_tracks(self, audio_emb, current_stage, num_tracks):
         assert isinstance(audio_emb, dict),  'audio_emb must be dict'
         keys = list(audio_emb.keys())
         
