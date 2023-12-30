@@ -28,6 +28,7 @@ class GaussianDiffusion(nn.Module):
             ddim_sampling_eta=1.,
             use_fp16=False,
             alphas=None,
+            demix_list = ['bass', 'drums', 'other', 'vocals']
     ):
         super().__init__()
         self.objective = objective
@@ -266,7 +267,11 @@ class GaussianDiffusion(nn.Module):
                             channels_list=[conditioning['input_concat_cond']],
                             batch_cfg=self.batch_cfg, scale_cfg=self.scale_cfg,
                             causal=causal)
-            selected_out, remainig_out = torch.split(model_out, [selected_channels, remaining_channels], dim=1)
+            
+            
+            
+            #Need to move this back into the model
+            selected_out, remaining_out = torch.split(model_out, [selected_channels, remaining_channels], dim=1)
 
         if self.objective == 'noise':
             target = noise
