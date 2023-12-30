@@ -133,7 +133,12 @@ class UnifiedMultiTaskTrainer(nn.Module):
                     end_idx = start_idx + sub_batch_size
                     sub_audio_emb = audio_emb[start_idx:end_idx]
                     sub_metadata = metadata[start_idx:end_idx]
-                    sub_demix_embs_dict = demix_embs_dict[start_idx:end_idx]
+                    sub_bass_embs = demix_embs_dict['bass'][start_idx:end_idx]
+                    sub_drums_embs = demix_embs_dict['drums'][start_idx:end_idx]
+                    sub_other_embs = demix_embs_dict['other'][start_idx:end_idx]
+                    sub_demix_embs_dict = {'bass': sub_bass_embs,
+                                           'drums': sub_drums_embs,
+                                           'other': sub_other_embs}
                     b, c, _, device = *sub_audio_emb.shape, self.config.device
                     num_tracks = len(sub_demix_embs_dict)
                     
@@ -213,7 +218,7 @@ class UnifiedMultiTaskTrainer(nn.Module):
                     all_loss = 0
                     
                 if self.global_step % self.config.eval_interval == 0:
-                    self.eval_all_tasks(rank=self.rank, epoch=epoch)
+                    self.eval_all_tasks(epoch=epoch)
                 
                 self.global_step += 1   
     
@@ -229,7 +234,6 @@ class UnifiedMultiTaskTrainer(nn.Module):
         all_loss = torch.tensor(0.0, device=self.config.device)
         batch_size = audio_emb.size(0)
         num_tracks = len(demix_embs_dict)
-        print('num_tracks:', num_tracks)
         assert batch_size % len(self.tasks) == 0, "Batch size must be divisible by the number of tasks"
         # This part evenly distributes samples in the batch among the tasks ('text_guided', 'music_inpaint', 'music_cont').
         # Therefore, the batch must be divisible by the number of tasks.
@@ -242,7 +246,6 @@ class UnifiedMultiTaskTrainer(nn.Module):
             sub_bass_embs = demix_embs_dict['bass'][start_idx:end_idx]
             sub_drums_embs = demix_embs_dict['drums'][start_idx:end_idx]
             sub_other_embs = demix_embs_dict['other'][start_idx:end_idx]
-            print('sub_drums_embs.shape:', sub_other_embs.shape)
             sub_demix_embs_dict = {'bass': sub_bass_embs,
                                    'drums': sub_drums_embs,
                                    'other': sub_other_embs}
@@ -281,16 +284,12 @@ class UnifiedMultiTaskTrainer(nn.Module):
                 # For more details, see section 5.1 SETUP-Implementation Details and Figure 2 in the JEN-1-Composer paper (https://arxiv.org/abs/2310.19180).
                 t_i = torch.randint(1, num_timesteps-1, (b,), device=device).long()
                 t_for_cond = torch.zeros(b, dtype=torch.long, device=device)
-                print('t_i.shape:', t_i.shape)
-                print('t_i:', t_i)
-                print('t_for_cond.shape:', t_for_cond.shape)
-                print('t_for_cond:', len(t_for_cond))
                 for i in range(b):
                     t_for_cond[i] = random.choice([0, t_i[i], num_timesteps])
                 with autocast(enabled=self.config.use_fp16):
                     loss = self.diffusion.training_loosses(self.model, (selected_audio_emb, remaining_audio_emb), 
                                                     (t_i, t_for_cond), conditioning, causal=causal)
-                    
+                    print('loss:', loss, 'task:', task)
             loss_dict[task] += loss.item()
             all_loss += loss
         
