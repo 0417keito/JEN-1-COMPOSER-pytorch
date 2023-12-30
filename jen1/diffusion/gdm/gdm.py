@@ -251,10 +251,10 @@ class GaussianDiffusion(nn.Module):
         x_t = self.q_sample(x, t)
         x_t_for_cond = self.q_sample(x_for_cond, t_for_cond)
         x_t = torch.concat([x_t, x_t_for_cond], dim=1)
-        t = torch.concat([t, t_for_cond])
         
         if noise is None:
             noise = torch.rand_like(x)
+        print('x_t.shape:', x_t.shape)
 
         with autocast(enabled=self.use_fp16):
             model_out = model(x_t, t, embedding=conditioning['cross_attn_cond'],
