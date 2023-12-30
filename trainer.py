@@ -35,6 +35,28 @@ class UnifiedMultiTaskTrainer(nn.Module):
                  input_concat_ids= ['masked_input', 'mask'],
                  curriculum_scheduler: CurriculumScheduler = None
                  ):
+        """
+        Args:
+            config: Configuration object containing settings for the training process.
+            rank: Rank in distributed training, indicating the specific process in a multi-GPU setup.
+            epoch_str: Starting epoch number for the training process.
+            global_step: Global step number, used to track overall progress in training.
+            model: The UNet model, customized for 1-dimensional data processing.
+            diffusion: Optional diffusion model for generating data.
+            conditioner: Module for conditioning the input, used when specific conditions are applied.
+            dls: Tuple containing data loaders for training (train_dl) and validation (valid_dl).
+            optimizer: The optimizer used for training the model.
+            lr_scheduler: Learning rate scheduler for adjusting the learning rate during training.
+            scaler: Scaler for gradient scaling, typically used in mixed precision training.
+            logger: Logger for tracking the training process and recording metrics.
+            writers: Tuple of writers for writing logs, separated for training and validation.
+            grad_clip: Maximum value for gradient clipping to prevent exploding gradients.
+            grad_accum_every: Specifies how often to accumulate gradients before updating weights.
+            cross_attn_cond_ids: Keys in the output dictionary from the conditioner, used for cross-attention.
+            global_cond_ids: Keys in the output dictionary from the conditioner, used for global conditions.
+            input_concat_ids: Keys in the output dictionary from the conditioner, whose outputs are concatenated channel-wise to the model input.
+            curriculum_scheduler: Scheduler for curriculum training, to progressively increase the difficulty of the training data.
+        """
         super().__init__()
         self.config=config
         self.tasks = self.config.tasks
@@ -196,10 +218,19 @@ class UnifiedMultiTaskTrainer(nn.Module):
                 self.global_step += 1   
     
     def train(self, audio_emb, metadata, demix_embs_dict):
+        '''
+        demix_embs_dict contains the latent representations for each track:
+            demix_embs_dict = {'bass': data_for_bass, 
+                            'drums': data_for_drum,
+                            'other': data_for_other }
+        The shape of each latent representation is [b, c, t], with c = 128.
+        '''
         loss_dict = {task: 0 for task in self.tasks}
         all_loss = torch.tensor(0.0, device=self.config.device)
         batch_size = audio_emb.size(0)
         assert batch_size % len(self.tasks) == 0, "Batch size must be divisible by the number of tasks"
+        # This part evenly distributes samples in the batch among the tasks ('text_guided', 'music_inpaint', 'music_cont').
+        # Therefore, the batch must be divisible by the number of tasks.
         sub_batch_size = batch_size // len(self.tasks)
         for i, task in enumerate(self.tasks):
             start_idx = i * sub_batch_size
@@ -211,23 +242,36 @@ class UnifiedMultiTaskTrainer(nn.Module):
             assert num_tracks > 1, 'num_tracks must be greater than 1'
             self.model.train()
             b, _, _, device = *sub_audio_emb.shape, self.config.device
-            
+
+            # Retrieve the current curriculum stage; the number in current_stage represents the number of tracks to generate.
+            # For more details, see section 4.3 PROGRESSIVE CURRICULUM TRAINING STRATEGY in the JEN-1-Composer paper (https://arxiv.org/abs/2310.19180).
             current_stage = self.curriculum_scheduler.current_stage 
+            # selected_audio_emb are the tracks selected for the current curriculum stage;
+            # remaining_audio_emb are the tracks not selected for the current stage.
+            # selected_keys and remaining_keys represent the names of these tracks.
             selected_audio_emb, remaining_audio_emb, selected_keys, remaining_keys = \
                 self.select_random_tracks(sub_demix_embs_dict, current_stage, num_tracks)
             prefix_prompt = self.create_prefix_prompt(selected_keys)
             for item in metadata:
-                #I don't know if I should be adding prefix prompts or prefix tuning. If you know, please fix it.
+                # If you know whether to add prefix prompts or prefix tuning, please fix this part.
                 item['prompt'] = prefix_prompt + ' ' + item['prompt']
-        
+            # The masked_input in this part is the audio_emb masked according to each task;
+            # mask is the mask corresponding to each task, and causal is the mode for each task.
+            # This follows the omnidirectional latent diffusion model from JEN-1.
+            # masked_input has 128 channels, mask has 1 channel; in total, 129 channels are concatenated channel-wise as the model input.
+            # For more details, see section 4.2 OMNIDIRECTIONAL LATENT DIFFUSION MODELS in the JEN-1 paper (https://arxiv.org/abs/2308.04729).
             masked_input, mask, causal = self.random_mask(sub_audio_emb, sub_audio_emb.shape[2], task)
             conditioning = self.conditioner(sub_metadata, self.config.device)
             conditioning['masked_input'] = masked_input
             conditioning['mask'] = mask
             conditioning = self.get_conditioning(conditioning)
-        
+
             if self.config.diffusion_type == 'gdm':
                 num_timesteps = self.diffusion.num_timesteps
+                # Selected tracks choose timesteps from 1 to T-1.
+                # For the remaining tracks, choose from [0, t_i, T].
+                # 0 is for Conditional Generation, t_i for Joint Generation, and T for Marginal Generation.
+                # For more details, see section 5.1 SETUP-Implementation Details and Figure 2 in the JEN-1-Composer paper (https://arxiv.org/abs/2310.19180).
                 t_i = torch.randint(1, num_timesteps-1, (b,), device=device).long()
                 t_for_cond = torch.zeros(b, dtype=torch.long, device=device)
                 for i in range(b):
@@ -327,7 +371,6 @@ class UnifiedMultiTaskTrainer(nn.Module):
             'bass': 'bass',
             'drums': 'drum',
             'other': 'other accompaniment',
-            'vocals': 'vocal'
         }
         
         task_tokens = [token_mapping.get(key, '') for key in selected_keys]
