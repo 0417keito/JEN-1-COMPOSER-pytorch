@@ -28,7 +28,7 @@ class MusicDataset(Dataset):
         self.metadatas_dir = f'{dataset_dir}/metadata'
         self.composer = composer
         if composer:
-            self.demix_dir = f'{dataset_dir}/htdemucs'
+            self.demix_dir = f'{self.audio_files_dir}/htdemucs'
         self.init_dataset()
     
     def get_duration_sec(self, file): 
@@ -86,8 +86,7 @@ class MusicDataset(Dataset):
             demix_chunks = {}
             demix_file_dict = {'bass': f'{self.demix_dir}/{song_name}/bass.wav',
                                'drums': f'{self.demix_dir}/{song_name}/drums.wav',
-                               'other': f'{self.demix_dir}/{song_name}/other.wav',
-                               'vocals': f'{self.demix_dir}/{song_name}/vocals.wav'}
+                               'other': f'{self.demix_dir}/{song_name}/other.wav'}
             for key, value in demix_file_dict.items():
                 demix_chunk, demix_sr = torchaudio.load(value)
                 start_sample = int(offset * demix_sr)
@@ -109,7 +108,6 @@ class MusicDataset(Dataset):
             chunk, sr, demix_chunks = self.get_song_chunk(item, offset)
         else:
             chunk, sr = self.get_song_chunk(item, offset)
-        chunk, sr = self.get_song_chunk(item, offset)
         song_name = os.path.splitext(os.path.basename(self.audio_files[index]))[0]
         if os.path.exists(f'{self.metadatas_dir}/{song_name}.json'):
             with open(f'{self.metadatas_dir}/{song_name}.json', 'r') as file:
@@ -150,11 +148,14 @@ def collate(batch):
     emb = torch.cat(emb, dim=0)
     demix_embs_dict = None
     metadata = [d for d in data]
+    keys = demix_embs[0].keys()
+    tensors_dict = {key: [] for key in keys}
     if demix_embs is not None:
-        demix_embs_dict = {}
-        for key, value in demix_embs_dict.items():
-            demix_embs_dict[key] = torch.cat(value, dim=0)
-        (emb, metadata, demix_embs_dict)
+        for d in demix_embs:
+            for key in keys:
+                tensors_dict[key].append(d[key])
+        demix_embs_dict = {key: torch.cat(tensors_dict[key], dim=0) for key in keys}
+        return (emb, metadata, demix_embs_dict)
 
     return (emb, metadata, demix_embs_dict)
 
