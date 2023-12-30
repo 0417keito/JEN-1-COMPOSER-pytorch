@@ -10,7 +10,6 @@ from encodec import EncodecModel
 from encodec.utils import convert_audio
 
 from jen1.diffusion.gdm.gdm import GaussianDiffusion
-from jen1.diffusion.vdm.vdm import VDM
 from jen1.model.model import UNetCFG1d
 from jen1.diffusion.gdm.noise_schedule import get_beta_schedule
 
@@ -53,12 +52,7 @@ class Jen1():
                                           embedding_scale=diffusion_config.embedding_scale,
                                           batch_cfg=diffusion_config.batch_cfg, scale_cfg=diffusion_config.scale_cfg,
                                           sampling_timesteps=steps, use_fp16=False)
-        else:   
-            diffusion = VDM(loss_type=diffusion_config.loss_type, device=self.device, cfg_dropout_proba=diffusion_config.cfg_dropout_proba,
-                            embedding_scale=diffusion_config.embedding_scale, 
-                            batch_cfg=diffusion_config.batch_cfg, scale_cfg=diffusion_config.scale_cfg,
-                            use_fp16=False)
-        
+            
         config_dict = {k: v for k, v in model_config.__dict__.items() if not k.startswith('__') and not callable(v)}
         context_embedding_features = config_dict.pop('context_embedding_features', None)
         context_embedding_max_length = config_dict.pop('context_embedding_max_length', None)
@@ -73,7 +67,7 @@ class Jen1():
         
         return diffusion, model
         
-    def generate(self, prompt, seed=-1, steps=100, batch_size=1, seconds=30, use_gdm=False,
+    def generate(self, prompt, seed=-1, steps=100, batch_size=1, seconds=30, use_gdm=True,
                  task='text_guided', init_audio=None, init_audio_sr=None, inpainting_scope=None):
         
         seed = seed if seed != -1 else np.random.randint(0, 2**32 -1)
@@ -96,32 +90,28 @@ class Jen1():
 
         if task == 'text_guided':
             mask = self.get_mask(sample_length, 0, seconds, batch_size)
-            masked_input = init_audio * mask
             causal = False
         elif task == 'music_inpaint':
             mask = self.get_mask(sample_length, inpainting_scope[0], inpainting_scope[1], batch_size)
-            inpaint_input = init_audio * mask
-            masked_input = inpaint_input
             causal = False
         elif task == 'music_cont':
             cont_length = sample_length - init_audio.size(2)
             cont_start = init_audio.size(2)
             mask = self.get_mask(sample_length, cont_start/self.sample_rate, seconds, batch_size)
             cont_audio = torch.randn(batch_size, self.audio_encoder.channels, cont_length, device=self.device)
-            cont_audio = cont_audio * mask[:, cont_start:]
-            masked_input = torch.cat([init_audio, cont_audio], dim=2)     
+            cont_audio = cont_audio * mask[:, cont_start:]   
+            init_audio = torch.cat([init_audio, cont_audio], dim=2) 
             causal = True   
         
         with torch.no_grad():
             init_emb = self.get_emb(init_audio).to(self.device)
             emb_shape = init_emb.shape
-            if flag:
-                init_emb = None
-            masked_emb = self.get_emb(masked_input).to(self.device)
             mask = mask.to(self.device)
             
             mask = torch.nn.functional.interpolate(mask, size=(emb_shape[2]))
-            
+            masked_emb = init_emb * mask
+            if flag:
+                init_emb = None
             batch_metadata = [{'prompt': prompt} for _ in range(batch_size)]
             conditioning = self.conditioner(batch_metadata, self.device)
             conditioning['masked_input'] = masked_emb
