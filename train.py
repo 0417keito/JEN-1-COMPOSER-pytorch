@@ -88,7 +88,7 @@ def run(rank, n_gpus, config: Config):
     if config.use_ddp:
         model = DDP(model, device_ids=[rank])
 
-        curriculum_scheduler = CurriculumScheduler(config.num_epoch, config.stage_ratios)
+    curriculum_scheduler = CurriculumScheduler(config.num_epoch, config.stage_ratios)
         
     logger.info('training...')
     if rank == 0:
