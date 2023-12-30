@@ -253,7 +253,7 @@ class GaussianDiffusion(nn.Module):
         x_t = torch.concat([x_t, x_t_for_cond], dim=1)
         t = torch.concat([t, t_for_cond])
         
-        if noise is not None:
+        if noise is None:
             noise = torch.rand_like(x)
 
         with autocast(enabled=self.use_fp16):
