@@ -242,7 +242,7 @@ class GaussianDiffusion(nn.Module):
                 extract(self.sqrt_one_minus_alphas_cumprod, t, x_start.shape) * noise
         )
 
-    def training_loosses(self, model, x_start, t, conditioning, noise=None, causal=False):
+    def training_losses(self, model, x_start, t, conditioning, noise=None, causal=False):
         assert isinstance(x_start, tuple), 'if composer x_start must be tuple'
         assert isinstance(t, tuple), 'if composer times must be tuple'
         x, x_for_cond = x_start
