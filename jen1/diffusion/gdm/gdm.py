@@ -265,7 +265,12 @@ class GaussianDiffusion(nn.Module):
                             channels_list=[conditioning['input_concat_cond']],
                             batch_cfg=self.batch_cfg, scale_cfg=self.scale_cfg,
                             causal=causal)
-            selected_out, remainig_out = torch.split(model_out, [selected_channels, remaining_channels], dim=1)
+            
+            #Deprecated
+            # selected_out, remainig_out = torch.split(model_out, [selected_channels, remaining_channels], dim=1)
+            
+            selected_out, out_1, out_2 = model_out
+            
 
         if self.objective == 'noise':
             target = noise

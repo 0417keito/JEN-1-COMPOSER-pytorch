@@ -179,7 +179,33 @@ class UNet1d(nn.Module):
             context_mapping_features=context_mapping_features,
             use_snake=use_snake
         )
-
+        
+        #From lucidrains, maybe move elsewhere?
+        class GEGLU(nn.Module):
+            def forward(self, x):
+                
+                x, gate = x.chunk(2, dim = -1)
+                return nn.functional.gelu(gate) * x
+        
+        class smlp(nn.Module):
+            def __init__(self, shape):
+                
+                self.down = torch.nn.Linear(shape, shape)
+                self.act = GEGLU()
+                self.up = torch.nn.Linear(shape, shape)
+                
+            def forward(self, x):
+                
+                x = self.down(x)
+                x = self.act(x)
+                x = self.up(x)
+                return x
+        
+        #TODO pull shapes from elsewhere
+        self.split_proj_0 = smlp(128)
+        self.split_proj_1 = smlp(128)
+        self.split_proj_2 = smlp(128)
+            
     def get_channels(
             self, channels_list: Optional[Sequence[Tensor]] = None, layer: int = 0
     ):
@@ -258,11 +284,34 @@ class UNet1d(nn.Module):
             x = upsample(x, skips=skips, mapping=mapping, embedding=embedding,
                          embedding_mask=embedding_mask, causal=causal)
 
+
+
+        #Add skip connections
         x += skips_list.pop()
         x = self.to_out(x, mapping)
-        x = self.stft.decoded1d(x) if self.use_stft else x
-
-        return x
+        
+        
+        
+        #For now we are going to cheat. We know there's 3 tracks.
+        #TODO clean up.
+        if x.shape[1] == 384:#3 tracks/384
+            #Split 3 ways here.
+            x_0, x_1, x_2 = torch.split(x, 3, dim=1)
+            
+            
+            #Run the split data through our MLP
+            x_0 = self.split_proj_0(x_0)
+            x_1 = self.split_proj_1(x_1)
+            x_2 = self.split_proj_2(x_2)
+            
+            #We could probably reconcat before this and then run once, not sure if that's better.
+            x_0 = self.stft.decoded1d(x_0) if self.use_stft else x_0
+            x_1 = self.stft.decoded1d(x_1) if self.use_stft else x_1
+            x_2 = self.stft.decoded1d(x_2) if self.use_stft else x_2
+            return x
+        else:
+            print("Do not support other sizes at this time, in model.py, exiting")
+            exit()
 
 
 class UNetCFG1d(UNet1d):
