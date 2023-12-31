@@ -269,6 +269,8 @@ class GaussianDiffusion(nn.Module):
             #Deprecated
             # selected_out, remainig_out = torch.split(model_out, [selected_channels, remaining_channels], dim=1)
             
+            
+            #Todo, verify that this is actually right even
             selected_out, out_1, out_2 = model_out
             
 
