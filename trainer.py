@@ -100,7 +100,7 @@ class UnifiedMultiTaskTrainer(nn.Module):
             avg_loss = all_task_loss_dict[task] / task_count if task_count > 0 else 0
             avg_total_loss += avg_loss
             self.logger.info(f'Average validation loss for task {task}: {avg_loss}')
-            if self.randk == 0:
+            if self.rank == 0:
                 scalars = {f'loss/val_{task}': avg_loss}
                 summarize(writer=self.writer, global_step=self.global_step, scalars=scalars)
         
@@ -148,20 +148,20 @@ class UnifiedMultiTaskTrainer(nn.Module):
                     prefix_prompt = self.create_prefix_prompt(selected_keys)
                     for item in sub_metadata:
                         item['prompt'] = prefix_prompt + '' + item['prompt']
-                    masked_input, mask, causal = self.random_mask(audio_emb, audio_emb.shape[2], task)
-                    conditioning = self.conditioner(metadata, self.config.device)
+                    masked_input, mask, causal = self.random_mask(sub_audio_emb, sub_audio_emb.shape[2], task)
+                    conditioning = self.conditioner(sub_metadata, self.config.device)
                     conditioning['masked_input'] = masked_input
                     conditioning['mask'] = mask
                     conditioning = self.get_conditioning(conditioning)
                     
                     if self.config.diffusion_type == 'gdm':
                         num_timesteps = self.diffusion.num_timesteps
-                        t_i = torch.randint(1, num_timesteps-1, (b,), device=device).long()
+                        t_i = torch.randint(1, num_timesteps-2, (b,), device=device).long()
                         t_for_cond = torch.zeros(b, dtype=torch.long, device=device)
                         for i in range(b):
-                            t_for_cond[i] = random.choice([0, t_i[i], num_timesteps])
+                            t_for_cond[i] = random.choice([0, t_i[i], num_timesteps-1])
                         with autocast(enabled=self.config.use_fp16):
-                            loss = self.diffusion.training_loosses(self.model, (selected_audio_emb, remaining_audio_emb),
+                            loss = self.diffusion.training_losses(self.model, (selected_audio_emb, remaining_audio_emb),
                                                                    (t_i, t_for_cond), conditioning, causal=causal)
                     loss_dict[task] += loss.item()
                 count += 1
@@ -282,12 +282,12 @@ class UnifiedMultiTaskTrainer(nn.Module):
                 # For the remaining tracks, choose from [0, t_i, T].
                 # 0 is for Conditional Generation, t_i for Joint Generation, and T for Marginal Generation.
                 # For more details, see section 5.1 SETUP-Implementation Details and Figure 2 in the JEN-1-Composer paper (https://arxiv.org/abs/2310.19180).
-                t_i = torch.randint(1, num_timesteps-1, (b,), device=device).long()
+                t_i = torch.randint(1, num_timesteps-2, (b,), device=device).long()
                 t_for_cond = torch.zeros(b, dtype=torch.long, device=device)
                 for i in range(b):
-                    t_for_cond[i] = random.choice([0, t_i[i], num_timesteps])
+                    t_for_cond[i] = random.choice([0, t_i[i], num_timesteps-1])
                 with autocast(enabled=self.config.use_fp16):
-                    loss = self.diffusion.training_loosses(self.model, (selected_audio_emb, remaining_audio_emb), 
+                    loss = self.diffusion.training_losses(self.model, (selected_audio_emb, remaining_audio_emb), 
                                                     (t_i, t_for_cond), conditioning, causal=causal)
                     print('loss:', loss, 'task:', task)
             loss_dict[task] += loss.item()
