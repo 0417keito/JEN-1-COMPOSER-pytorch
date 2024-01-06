@@ -143,8 +143,10 @@ class UnifiedMultiTaskTrainer(nn.Module):
                     num_tracks = len(sub_demix_embs_dict)
                     
                     current_stage = self.curriculum_scheduler.current_stage
+                    
                     selected_audio_emb, remaining_audio_emb, selected_keys, remaining_keys = \
                         self.select_random_tracks(sub_demix_embs_dict, current_stage, num_tracks)
+                                
                     prefix_prompt = self.create_prefix_prompt(selected_keys)
                     for item in sub_metadata:
                         item['prompt'] = prefix_prompt + '' + item['prompt']
@@ -162,7 +164,7 @@ class UnifiedMultiTaskTrainer(nn.Module):
                             t_for_cond[i] = random.choice([0, t_i[i], num_timesteps-1])
                         with autocast(enabled=self.config.use_fp16):
                             loss = self.diffusion.training_losses(self.model, (selected_audio_emb, remaining_audio_emb),
-                                                                   (t_i, t_for_cond), conditioning, causal=causal)
+                                                                   (t_i, t_for_cond), conditioning, causal=causal, selected_keys = selected_keys)
                     loss_dict[task] += loss.item()
                 count += 1
                                 
@@ -288,7 +290,7 @@ class UnifiedMultiTaskTrainer(nn.Module):
                     t_for_cond[i] = random.choice([0, t_i[i], num_timesteps-1])
                 with autocast(enabled=self.config.use_fp16):
                     loss = self.diffusion.training_losses(self.model, (selected_audio_emb, remaining_audio_emb), 
-                                                    (t_i, t_for_cond), conditioning, causal=causal)
+                                                    (t_i, t_for_cond), conditioning, causal=causal, selected_keys = selected_keys)
                     print('loss:', loss, 'task:', task)
             loss_dict[task] += loss.item()
             all_loss += loss

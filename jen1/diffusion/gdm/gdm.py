@@ -242,11 +242,11 @@ class GaussianDiffusion(nn.Module):
                 extract(self.sqrt_one_minus_alphas_cumprod, t, x_start.shape) * noise
         )
 
-    def training_losses(self, model, x_start, t, conditioning, noise=None, causal=False):
+    def training_losses(self, model, x_start, t, conditioning, noise=None, causal=False, selected_keys = None):
         assert isinstance(x_start, tuple), 'if composer x_start must be tuple'
         assert isinstance(t, tuple), 'if composer times must be tuple'
         x, x_for_cond = x_start
-        selected_channels, remaining_channels = x.size(1), x_for_cond.size(1)
+        # selected_channels, remaining_channels = x.size(1), x_for_cond.size(1)#Don't thnk this is needed right now
         t, t_for_cond = t
         x_t = self.q_sample(x, t)
         x_t_for_cond = self.q_sample(x_for_cond, t_for_cond)
@@ -265,12 +265,24 @@ class GaussianDiffusion(nn.Module):
                             batch_cfg=self.batch_cfg, scale_cfg=self.scale_cfg,
                             causal=causal)
             
+        #             token_mapping = {
+        #     'bass': 'bass',
+        #     'drums': 'drum',
+        #     'other': 'other accompaniment',
+        # }
+        
             #Deprecated
             # selected_out, remainig_out = torch.split(model_out, [selected_channels, remaining_channels], dim=1)
             
             
-            #TODO, verify that this is actually right even
-            selected_out, out_1, out_2 = model_out
+            bass, drums, other = model_out
+            
+            if 'bass' in selected_keys:
+                selected_out = bass
+            elif 'drums' in selected_keys:
+                selected_out = bass
+            elif 'other' in selected_keys:
+                selected_out = bass
 
         if self.objective == 'noise':
             target = noise
@@ -279,6 +291,8 @@ class GaussianDiffusion(nn.Module):
         else:
             raise ValueError(f'unknown objective {self.objective}')
 
+
+        #TODO this loss doesn't cover multiple tracks I think?
         loss = self.loss_fn(selected_out, target, reduction='none')
         loss = reduce(loss, 'b ... -> b', 'mean')
         return loss.mean()
