@@ -188,8 +188,9 @@ class UNet1d(nn.Module):
                 return nn.functional.gelu(gate) * x
         
         class smlp(nn.Module):
+            
             def __init__(self, shape):
-                
+                super().__init__()
                 self.down = torch.nn.Linear(shape, shape)
                 self.act = GEGLU()
                 self.up = torch.nn.Linear(shape, shape)
@@ -296,19 +297,21 @@ class UNet1d(nn.Module):
         #TODO clean up.
         if x.shape[1] == 384:#3 tracks/384
             #Split 3 ways here.
-            x_0, x_1, x_2 = torch.split(x, 3, dim=1)
-            
+            x_0, x_1, x_2 = torch.split(x, 128, dim=1)
             
             #Run the split data through our MLP
-            x_0 = self.split_proj_0(x_0)
-            x_1 = self.split_proj_1(x_1)
-            x_2 = self.split_proj_2(x_2)
+            #I think this isn't needed actually, because it's linear on last dim, but we don't change that. 
+            
+            
+            # x_0 = self.split_proj_0(x_0)
+            # x_1 = self.split_proj_1(x_1)
+            # x_2 = self.split_proj_2(x_2)
             
             #We could probably reconcat before this and then run once, not sure if that's better.
             x_0 = self.stft.decoded1d(x_0) if self.use_stft else x_0
             x_1 = self.stft.decoded1d(x_1) if self.use_stft else x_1
             x_2 = self.stft.decoded1d(x_2) if self.use_stft else x_2
-            return x
+            return x_0, x_1, x_2
         else:
             print("Do not support other sizes at this time, in model.py, exiting")
             exit()
@@ -400,26 +403,51 @@ class UNetCFG1d(UNet1d):
                 # Compute both normal and fixed embedding outputs
                 batch_out = super().forward(batch_x, batch_time, embedding=batch_embed, embedding_mask=batch_mask,
                                             features=batch_features, channels_list=batch_channels, **kwargs)
-                out, out_masked = batch_out.chunk(2, dim=0)
+                
+                #batch_out contains all the tracks in a tuple
+                outputs, outs_masked = [], []
+                for batch in batch_out:
+                    out_t, out_masked_t = batch.chunk(2, dim=0)
+                    outputs.append(out_t)
+                    outs_masked.append(out_masked_t)
 
-            else:
+            else:#not implemented for splits
                 # Compute both normal and fixed embedding outputs
                 out = super().forward(x, time, embedding=embedding, embedding_mask=embedding_mask, **kwargs)
                 out_masked = super().forward(x, time, embedding=fixed_embedding, embedding_mask=embedding_mask,
                                              **kwargs)
 
-            out_cfg = out_masked + (out - out_masked) * embedding_scale
+
+            out_cfgs = []
+            for out, out_masked in zip(outputs, outs_masked):
+                out_cfg_t = out_masked + (out - out_masked) * embedding_scale
+                out_cfgs.append(out_cfg_t)
+            
 
             if scale_cfg:
-
-                out_std = out.std(dim=1, keepdim=True)
-                out_cfg_std = out_cfg.std(dim=1, keepdim=True)
-
-                return scale_phi * (out_cfg * (out_std / out_cfg_std)) + (1 - scale_phi) * out_cfg
-
-            else:
-
-                return out_cfg
+                
+                out_stds = []
+                
+                for out in outputs:
+                    out_std = out.std(dim=1, keepdim=True)
+                    out_stds.append(out_std)
+                
+                out_cfg_stds = []
+                
+                for out in out_cfgs:
+                    out_std = out.std(dim=1, keepdim=True)
+                    out_cfg_stds.append(out_std)
+                    
+                
+                scale_phis = []
+                for out_std, out_cfg_std, out_cfg in zip(out_stds, out_cfg_stds, out_cfgs):
+                    scale = scale_phi * (out_cfg * (out_std / out_cfg_std)) + (1 - scale_phi) * out_cfg
+                    scale_phis.append(scale)
+                
+                return scale_phis
+                    
+            else:#Might not be changed correctly for splits
+                return out_cfgs
 
         else:
             return super().forward(x, time, embedding=embedding, embedding_mask=embedding_mask, **kwargs)

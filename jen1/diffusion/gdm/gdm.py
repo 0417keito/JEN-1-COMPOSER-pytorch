@@ -254,7 +254,6 @@ class GaussianDiffusion(nn.Module):
         
         if noise is None:
             noise = torch.rand_like(x)
-        print('x_t.shape:', x_t.shape)
 
         with autocast(enabled=self.use_fp16):
             model_out = model(x_t, t, embedding=conditioning['cross_attn_cond'],
@@ -270,9 +269,8 @@ class GaussianDiffusion(nn.Module):
             # selected_out, remainig_out = torch.split(model_out, [selected_channels, remaining_channels], dim=1)
             
             
-            #Todo, verify that this is actually right even
+            #TODO, verify that this is actually right even
             selected_out, out_1, out_2 = model_out
-            
 
         if self.objective == 'noise':
             target = noise
