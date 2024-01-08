@@ -242,9 +242,13 @@ class GaussianDiffusion(nn.Module):
                 extract(self.sqrt_one_minus_alphas_cumprod, t, x_start.shape) * noise
         )
 
+    #x_start contains a tuple of the selected audio and the remaining audio
+    #t contains timesteps
     def training_losses(self, model, x_start, t, conditioning, noise=None, causal=False, selected_keys = None):
         assert isinstance(x_start, tuple), 'if composer x_start must be tuple'
         assert isinstance(t, tuple), 'if composer times must be tuple'
+        
+        
         x, x_for_cond = x_start
         # selected_channels, remaining_channels = x.size(1), x_for_cond.size(1)#Don't thnk this is needed right now
         t, t_for_cond = t
@@ -252,10 +256,12 @@ class GaussianDiffusion(nn.Module):
         x_t_for_cond = self.q_sample(x_for_cond, t_for_cond)
         x_t = torch.concat([x_t, x_t_for_cond], dim=1)
         
+        #Currently not used?
         if noise is None:
             noise = torch.rand_like(x)
 
         with autocast(enabled=self.use_fp16):
+            #Model output always takes the form bass, drums, other. 
             model_out = model(x_t, t, embedding=conditioning['cross_attn_cond'],
                             embedding_mask=conditioning['cross_attn_masks'],
                             embedding_scale=self.embedding_scale,
@@ -265,25 +271,11 @@ class GaussianDiffusion(nn.Module):
                             batch_cfg=self.batch_cfg, scale_cfg=self.scale_cfg,
                             causal=causal)
             
-        #             token_mapping = {
-        #     'bass': 'bass',
-        #     'drums': 'drum',
-        #     'other': 'other accompaniment',
-        # }
-        
             #Deprecated
             # selected_out, remainig_out = torch.split(model_out, [selected_channels, remaining_channels], dim=1)
             
-            
-            bass, drums, other = model_out
-            
-            if 'bass' in selected_keys:
-                selected_out = bass
-            elif 'drums' in selected_keys:
-                selected_out = bass
-            elif 'other' in selected_keys:
-                selected_out = bass
-
+        #TODO v-objective
+        #Todo noise objective doesn't work
         if self.objective == 'noise':
             target = noise
         elif self.objective == 'x0':
@@ -291,8 +283,22 @@ class GaussianDiffusion(nn.Module):
         else:
             raise ValueError(f'unknown objective {self.objective}')
 
+        loss = 0.0
+    
+        #If our target shape is like this, we need to split it.
+        if target.shape[1] == 256 or target.shape[1] == 384:
+            targets = torch.split(target, 128, dim=1)
+            targets = list(targets)
+        
+        #Iterate over available track choices, add to loss.
+        if 'bass' in selected_keys:
+            curr_loss = self.loss_fn(model_out[0], targets.pop(0), reduction='none')
+            loss += reduce(curr_loss, 'b ... -> b', 'mean')
+        elif 'drums' in selected_keys:
+            curr_loss = self.loss_fn(model_out[1], targets.pop(0), reduction='none')
+            loss += reduce(curr_loss, 'b ... -> b', 'mean')
+        elif 'other' in selected_keys:
+            curr_loss = self.loss_fn(model_out[2], targets.pop(0), reduction='none')
+            loss += reduce(curr_loss, 'b ... -> b', 'mean')
 
-        #TODO this loss doesn't cover multiple tracks I think?
-        loss = self.loss_fn(selected_out, target, reduction='none')
-        loss = reduce(loss, 'b ... -> b', 'mean')
         return loss.mean()
