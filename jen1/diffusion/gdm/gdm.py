@@ -285,10 +285,8 @@ class GaussianDiffusion(nn.Module):
 
         loss = 0.0
     
-        #If our target shape is like this, we need to split it.
-        if target.shape[1] == 256 or target.shape[1] == 384:
-            targets = torch.split(target, 128, dim=1)
-            targets = list(targets)
+        targets = torch.split(target, 128, dim=1)
+        targets = list(targets)
         
         #Iterate over available track choices, add to loss.
         if 'bass' in selected_keys:
