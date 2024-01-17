@@ -113,9 +113,13 @@ class Jen1():
             if flag:
                 init_emb = None
             batch_metadata = [{'prompt': prompt} for _ in range(batch_size)]
+            prefix_prompt = self.create_prefix_prompt(['bass', 'drums', 'other'])  
+            for item in batch_metadata:
+                # If you know whether to add prefix prompts or prefix tuning, please fix this part.
+                item['prompt'] = prefix_prompt + ' ' + item['prompt']
             conditioning = self.conditioner(batch_metadata, self.device)
             conditioning['masked_input'] = masked_emb
-            conditioning['mask'] = mask
+            conditioning['mask'] = mask          
             conditioning = self.get_conditioning(conditioning)
             
             sample_embs = diffusion.sample(model, emb_shape, conditioning, causal, init_data=init_emb)
@@ -184,6 +188,18 @@ class Jen1():
             "input_concat_cond": input_concat_cond
         }
         
+    def create_prefix_prompt(self, selected_keys):
+        token_mapping = {
+            'bass': 'bass',
+            'drums': 'drum',
+            'other': 'other accompaniment',
+        }
+        
+        task_tokens = [token_mapping.get(key, '') for key in selected_keys]
+        combined_task_token = '[{}] generation'.format(' & '.join(task_tokens))
+        
+        return combined_task_token
+        
 def save_audio_tensor(audio_tensor: torch.Tensor, file_path: str, sample_rate: int = 48000):
     print(f'Saving audio to {file_path}')
     """
@@ -209,4 +225,7 @@ if __name__ == '__main__':
     jen1 = Jen1(ckpt_path=None)
     prompt = 'a beautiful song'
     samples = jen1.generate(prompt=prompt)
-    save_audio_tensor(samples, 'samples.wav')
+    drum, bass, other = samples[:, 128:, :], samples[:, 128:256, :], samples[:, 236:384, :]
+    save_audio_tensor(drum, 'drum.wav')
+    save_audio_tensor(bass, 'bass.wav')
+    save_audio_tensor(other, 'other.wav')
