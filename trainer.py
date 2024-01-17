@@ -257,12 +257,20 @@ class UnifiedMultiTaskTrainer(nn.Module):
 
             # Retrieve the current curriculum stage; the number in current_stage represents the number of tracks to generate.
             # For more details, see section 4.3 PROGRESSIVE CURRICULUM TRAINING STRATEGY in the JEN-1-Composer paper (https://arxiv.org/abs/2310.19180).
-            current_stage = self.curriculum_scheduler.current_stage 
+            current_stage = self.curriculum_scheduler.current_stage            
             # selected_audio_emb are the tracks selected for the current curriculum stage;
             # remaining_audio_emb are the tracks not selected for the current stage.
             # selected_keys and remaining_keys represent the names of these tracks.
             selected_audio_emb, remaining_audio_emb, selected_keys, remaining_keys = \
                 self.select_random_tracks(sub_demix_embs_dict, current_stage, num_tracks)
+                
+            #Stage 1, select 1x. Use the other 2 at T for marginal, loss is 1.
+            #if you do conditional/joint, you just change how you NOISE the other ones.
+            #In stage 2, marginal, we select 2. We use the other 1 as T, and predict both?
+            #In stage 2 conditional, we select 2, use the other 1 as conditioning, and predict.... both, I guess?
+            #Stage 2 joint, we select 2, get all 3 at the same timestep t, but only predict 2.
+            #Stage 3, we can only do joint...?
+                
             prefix_prompt = self.create_prefix_prompt(selected_keys)
             for item in metadata:
                 # If you know whether to add prefix prompts or prefix tuning, please fix this part.
@@ -286,9 +294,22 @@ class UnifiedMultiTaskTrainer(nn.Module):
                 # For more details, see section 5.1 SETUP-Implementation Details and Figure 2 in the JEN-1-Composer paper (https://arxiv.org/abs/2310.19180).
                 t_i = torch.randint(1, num_timesteps-2, (b,), device=device).long()
                 t_for_cond = torch.zeros(b, dtype=torch.long, device=device)
+                
+                #For joint/selected all 3, we don't pick.
+                
                 for i in range(b):
-                    t_for_cond[i] = random.choice([0, t_i[i], num_timesteps-1])
+                    if len(selected_audio_emb) != 3:#Hardcoded for now, should be max stage later.
+                        t_for_cond[i] = random.choice([0, t_i[i], num_timesteps-1])
+                    else:
+                        t_for_cond[i] = t_i[i]
+                    
+                    
+                #So before we send it off here
+                #We should concatenate the model inputs
+                #And we should have the targets prepared also
+                
                 with autocast(enabled=self.config.use_fp16):
+                    print(selected_keys)
                     loss = self.diffusion.training_losses(self.model, (selected_audio_emb, remaining_audio_emb), 
                                                     (t_i, t_for_cond), conditioning, causal=causal, selected_keys = selected_keys)
                     print('loss:', loss, 'task:', task)

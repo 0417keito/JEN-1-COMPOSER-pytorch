@@ -244,21 +244,26 @@ class GaussianDiffusion(nn.Module):
 
     #x_start contains a tuple of the selected audio and the remaining audio
     #t contains timesteps
-    def training_losses(self, model, x_start, t, conditioning, noise=None, causal=False, selected_keys = None):
-        assert isinstance(x_start, tuple), 'if composer x_start must be tuple'
+    def training_losses(self, model, audio_input, t, conditioning, noise=None, causal=False, selected_keys = None):
+        assert isinstance(audio_input, tuple), 'if composer audio_input must be tuple'
         assert isinstance(t, tuple), 'if composer times must be tuple'
         
         
-        x, x_for_cond = x_start
-        # selected_channels, remaining_channels = x.size(1), x_for_cond.size(1)#Don't thnk this is needed right now
+        
+        selected_audio, remaining_audio = audio_input
+        
+        # selected_channels, remaining_channels = selected_audio.size(1), remaining_audio.size(1)#Don't thnk this is needed right now
         t, t_for_cond = t
-        x_t = self.q_sample(x, t)
-        x_t_for_cond = self.q_sample(x_for_cond, t_for_cond)
-        x_t = torch.concat([x_t, x_t_for_cond], dim=1)
+        x_t = self.q_sample(selected_audio, t)
+        
+        #If we have no remanining tracks, we are in joint mode, and have all the items.
+        if remaining_audio != None:
+            x_t_for_cond = self.q_sample(remaining_audio, t_for_cond)
+            x_t = torch.concat([x_t, x_t_for_cond], dim=1)
         
         #Currently not used?
         if noise is None:
-            noise = torch.rand_like(x)
+            noise = torch.rand_like(selected_audio)
 
         with autocast(enabled=self.use_fp16):
             #Model output always takes the form bass, drums, other. 
@@ -279,7 +284,7 @@ class GaussianDiffusion(nn.Module):
         if self.objective == 'noise':
             target = noise
         elif self.objective == 'x0':
-            target = x
+            target = selected_audio
         else:
             raise ValueError(f'unknown objective {self.objective}')
 
