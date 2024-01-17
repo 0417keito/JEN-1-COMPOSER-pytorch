@@ -9,6 +9,7 @@ from utils.config import Config
 from utils.logger import summarize
 from utils.script_util import save_checkpoint
 from utils.curriculum_scheduler import CurriculumScheduler
+from utils.curriculum_scheduler import curriculum_scheduler
 from jen1.model.model import UNetCFG1d
 from jen1.diffusion.gdm.gdm import GaussianDiffusion
 from jen1.conditioners import MultiConditioner
@@ -30,10 +31,10 @@ class UnifiedMultiTaskTrainer(nn.Module):
                  writers,
                  grad_clip,
                  grad_accum_every,
+                 total_step,
                  cross_attn_cond_ids=['prompt'],
                  global_cond_ids= [],
                  input_concat_ids= ['masked_input', 'mask'],
-                 curriculum_scheduler: CurriculumScheduler = None
                  ):
         """
         Args:
@@ -80,17 +81,9 @@ class UnifiedMultiTaskTrainer(nn.Module):
         self.global_cond_ids = global_cond_ids
         self.input_concat_ids = input_concat_ids
         
+        self.total_step = total_step
+        
         self.best_avg_total_loss = float('inf')
-        self.curriculum_scheduler = curriculum_scheduler
-        
-    def curriculum_train(self):
-        assert self.curriculum_scheduler is not None, "Curriculum scheduler is not provided"
-        num_curriculum_stages = self.curriculum_scheduler.curriculum_stages
-        
-        for stage in range(self.curriculum_scheduler.current_stage, num_curriculum_stages + 1):
-            start_epoch, end_epoch = self.curriculum_scheduler.get_current_stage_epochs()
-            self.train_loop(self.epoch_str + start_epoch, self.epoch_str + end_epoch)
-            self.curriculum_scheduler.update_stage()
         
     def eval_all_tasks(self, epoch):
         avg_total_loss = 0
@@ -170,12 +163,13 @@ class UnifiedMultiTaskTrainer(nn.Module):
                                 
         return loss_dict, count
         
-    def train_loop(self, str_epoch, end_epoch):
+    def train_loop(self):
+        num_epoch = self.config.num_epoch
         grad_accum = 0
         all_loss = 0
         loss_dict = {task: 0 for task in self.tasks}
         
-        for epoch in range(str_epoch, int(end_epoch + 1)):
+        for epoch in range(self.epoch_str, int(self.epoch_str + num_epoch + 1)):
             for batch_idx, (audio_emb, metadata, demix_embs_dict) in enumerate(self.train_dl):
                 all_task_loss, all_loss_dict = self.train(audio_emb=audio_emb, metadata=metadata, demix_embs_dict=demix_embs_dict)
                 all_loss += all_task_loss.item() / self.grad_accum_every
@@ -257,22 +251,14 @@ class UnifiedMultiTaskTrainer(nn.Module):
 
             # Retrieve the current curriculum stage; the number in current_stage represents the number of tracks to generate.
             # For more details, see section 4.3 PROGRESSIVE CURRICULUM TRAINING STRATEGY in the JEN-1-Composer paper (https://arxiv.org/abs/2310.19180).
-            current_stage = self.curriculum_scheduler.current_stage            
+            selected_stage = curriculum_scheduler(self.global_step,  self.total_step)
             # selected_audio_emb are the tracks selected for the current curriculum stage;
             # remaining_audio_emb are the tracks not selected for the current stage.
             # selected_keys and remaining_keys represent the names of these tracks.
             selected_audio_emb, remaining_audio_emb, selected_keys, remaining_keys = \
-                self.select_random_tracks(sub_demix_embs_dict, current_stage, num_tracks)
-                
-            #Stage 1, select 1x. Use the other 2 at T for marginal, loss is 1.
-            #if you do conditional/joint, you just change how you NOISE the other ones.
-            #In stage 2, marginal, we select 2. We use the other 1 as T, and predict both?
-            #In stage 2 conditional, we select 2, use the other 1 as conditioning, and predict.... both, I guess?
-            #Stage 2 joint, we select 2, get all 3 at the same timestep t, but only predict 2.
-            #Stage 3, we can only do joint...?
-                
+                self.select_random_tracks(sub_demix_embs_dict, selected_stage, num_tracks)
             prefix_prompt = self.create_prefix_prompt(selected_keys)
-            for item in metadata:
+            for item in sub_metadata:
                 # If you know whether to add prefix prompts or prefix tuning, please fix this part.
                 item['prompt'] = prefix_prompt + ' ' + item['prompt']
             # The masked_input in this part is the audio_emb masked according to each task;
@@ -294,22 +280,9 @@ class UnifiedMultiTaskTrainer(nn.Module):
                 # For more details, see section 5.1 SETUP-Implementation Details and Figure 2 in the JEN-1-Composer paper (https://arxiv.org/abs/2310.19180).
                 t_i = torch.randint(1, num_timesteps-2, (b,), device=device).long()
                 t_for_cond = torch.zeros(b, dtype=torch.long, device=device)
-                
-                #For joint/selected all 3, we don't pick.
-                
                 for i in range(b):
-                    if len(selected_audio_emb) != 3:#Hardcoded for now, should be max stage later.
-                        t_for_cond[i] = random.choice([0, t_i[i], num_timesteps-1])
-                    else:
-                        t_for_cond[i] = t_i[i]
-                    
-                    
-                #So before we send it off here
-                #We should concatenate the model inputs
-                #And we should have the targets prepared also
-                
+                    t_for_cond[i] = random.choice([0, t_i[i], num_timesteps-1])
                 with autocast(enabled=self.config.use_fp16):
-                    print(selected_keys)
                     loss = self.diffusion.training_losses(self.model, (selected_audio_emb, remaining_audio_emb), 
                                                     (t_i, t_for_cond), conditioning, causal=causal, selected_keys = selected_keys)
                     print('loss:', loss, 'task:', task)
