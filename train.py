@@ -6,7 +6,6 @@ from torch.utils.tensorboard import SummaryWriter
 
 from dataset.dataloader import get_dataloaders
 from trainer import UnifiedMultiTaskTrainer
-from utils.curriculum_scheduler import CurriculumScheduler
 from utils.config import OptimizerConfig, DataConfig
 from utils.logger import get_logger
 from utils.script_util import *
@@ -79,6 +78,7 @@ def run(rank, n_gpus, config: Config):
         global_step = 0
         print('Initial state mode')
     global_step = (epoch_str - 1) * len(train_dl)
+    total_step = (config.num_epoch) * len(train_dl)
 
     # creating scheduler
     lr_scheduler = torch.optim.lr_scheduler.LinearLR(optimizer=optim, last_epoch=epoch_str - 2)
@@ -87,8 +87,6 @@ def run(rank, n_gpus, config: Config):
 
     if config.use_ddp:
         model = DDP(model, device_ids=[rank])
-
-        curriculum_scheduler = CurriculumScheduler(config.num_epoch, config.stage_ratios)
         
     logger.info('training...')
     if rank == 0:
@@ -109,7 +107,7 @@ def run(rank, n_gpus, config: Config):
             writers=[writer, writer_val],
             grad_clip=grad_clip,
             grad_accum_every=config.grad_accum_every,
-            curriculum_scheduler=curriculum_scheduler
+            total_step=total_step
         )
     else:
         trainer = UnifiedMultiTaskTrainer(
@@ -126,9 +124,9 @@ def run(rank, n_gpus, config: Config):
             writers=[writer, None],
             grad_clip=grad_clip,
             grad_accum_every=config.grad_accum_every,
-            curriculum_scheduler=curriculum_scheduler
+            total_step=total_step
         )
-    trainer.curriculum_train()
+    trainer.train_loop()
 
 
 if __name__ == '__main__':
