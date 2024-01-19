@@ -86,7 +86,7 @@ def run(rank, n_gpus, config: Config):
     scaler = GradScaler(enabled=config.use_fp16)
 
     if config.use_ddp:
-        model = DDP(model, device_ids=[rank])
+        model = DDP(model, device_ids=[rank], find_unused_parameters=True)
         
     logger.info('training...')
     if rank == 0:
