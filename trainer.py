@@ -8,7 +8,6 @@ import typing as tp
 from utils.config import Config
 from utils.logger import summarize
 from utils.script_util import save_checkpoint
-from utils.curriculum_scheduler import CurriculumScheduler
 from utils.curriculum_scheduler import curriculum_scheduler
 from jen1.model.model import UNetCFG1d
 from jen1.diffusion.gdm.gdm import GaussianDiffusion
